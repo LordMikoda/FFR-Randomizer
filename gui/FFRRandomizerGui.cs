@@ -390,9 +390,9 @@ namespace FFRRandomizerGui
             Text = "FFR Randomizer";
             AutoScaleMode = AutoScaleMode.Dpi;
             AutoScaleDimensions = new SizeF(96f, 96f);
-            FormBorderStyle = FormBorderStyle.FixedSingle;
-            MaximizeBox = false;
+            FormBorderStyle = FormBorderStyle.Sizable;
             StartPosition = FormStartPosition.CenterScreen;
+            ResizeRedraw = true;
             BackColor = Theme.Ground;
             ForeColor = Theme.Text;
             Font = Theme.Ui(10f, FontStyle.Regular);
@@ -437,9 +437,9 @@ namespace FFRRandomizerGui
                 {
                     settings.Add(control);
                 }
-                else if (control.Top >= footerTop)
+                else
                 {
-                    control.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+                    Stretch(control, control.Top >= footerTop ? AnchorStyles.Bottom : AnchorStyles.Top);
                 }
             }
             foreach (Control control in settings)
@@ -447,19 +447,48 @@ namespace FFRRandomizerGui
                 Controls.Remove(control);
                 control.Top -= HeaderHeight + 1;
                 body.Controls.Add(control);
+                Stretch(control, AnchorStyles.Top);
             }
             Controls.Add(body);
         }
 
-        // Shrinks the window to fit the screen, for example 1080p at 125% or more.
+        // Controls that start at the left margin widen with the window, and
+        // ones further right, such as Browse and the version, keep to the right
+        // edge. The title, inset for the crystal mark, stays put.
+        static void Stretch(Control control, AnchorStyles edge)
+        {
+            if (control.Left == Pad)
+            {
+                control.Anchor = edge | AnchorStyles.Left | AnchorStyles.Right;
+            }
+            else if (control.Left > ContentWidth / 2)
+            {
+                control.Anchor = edge | AnchorStyles.Right;
+            }
+            else
+            {
+                control.Anchor = edge | AnchorStyles.Left;
+            }
+        }
+
+        // Opens at most three quarters of the screen's height, so it fits lower
+        // resolutions and high scaling, and the settings scroll. The window can
+        // be dragged taller or wider, but not narrower than its design width or
+        // shorter than the header, footer and a few rows of settings, and not
+        // taller than everything at once.
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
             Rectangle area = Screen.FromControl(this).WorkingArea;
-            if (Height > area.Height)
+            int frame = Height - ClientSize.Height;
+            int scaled = (HeaderHeight + FooterHeight + 240) * DeviceDpi / 96 + frame;
+            MinimumSize = new Size(Width, Math.Min(scaled, area.Height));
+            MaximumSize = new Size(Width * 8 / 5, Height);
+            int fit = area.Height * 3 / 4;
+            if (Height > fit)
             {
-                Height = area.Height;
-                Location = new Point(area.Left + (area.Width - Width) / 2, area.Top);
+                Height = Math.Max(fit, MinimumSize.Height);
+                Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + (area.Height - Height) / 2);
                 Invalidate();
             }
         }
@@ -538,6 +567,7 @@ namespace FFRRandomizerGui
             box.Font = font;
             box.Location = new Point(12, (44 - font.Height) / 2);
             box.Width = width - 24;
+            box.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             card.Controls.Add(box);
             Controls.Add(card);
             return card;
@@ -650,6 +680,8 @@ namespace FFRRandomizerGui
             info.Location = new Point(14, top + 33);
             info.Size = new Size(420, 20);
             toggle.Location = new Point(ContentWidth - 52 - 14, top + 17);
+            toggle.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            name.Anchor = info.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             toggle.AccessibleName = title;
             toggle.Changed += delegate { ClearSaved(); };
             card.Controls.Add(name);
@@ -685,6 +717,7 @@ namespace FFRRandomizerGui
                 quantityButtons[i] = option;
                 card.Controls.Add(option);
             }
+            card.Resize += delegate { LayOutQuantity(card); };
             quantityHelp.Location = new Point(Pad, y + 76);
             quantityHelp.Size = new Size(ContentWidth, 20);
             quantityHelp.Font = Theme.Ui(9.5f, FontStyle.Regular);
@@ -692,6 +725,21 @@ namespace FFRRandomizerGui
             quantityHelp.BackColor = Color.Transparent;
             Controls.Add(quantityHelp);
             return y + 108;
+        }
+
+        // The three buttons share the card's width, with the gap they start with.
+        void LayOutQuantity(Card card)
+        {
+            if (quantityButtons[2] == null)
+            {
+                return;
+            }
+            int gap = quantityButtons[0].Top;
+            int width = (card.ClientSize.Width - 4 * gap) / 3;
+            for (int i = 0; i < 3; i++)
+            {
+                quantityButtons[i].SetBounds(gap + i * (width + gap), gap, width, quantityButtons[i].Height);
+            }
         }
 
         void BuildComingLater(int y)

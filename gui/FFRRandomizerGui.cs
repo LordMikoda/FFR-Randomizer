@@ -347,6 +347,13 @@ namespace FFRRandomizerGui
     {
         const int Pad = 20;
         const int ContentWidth = 520;
+        const int FullHeight = 936;
+        const int HeaderHeight = 52;
+        const int FooterHeight = 124;
+
+        // The settings between the header and the footer. It scrolls when the
+        // screen is too short for the whole window.
+        readonly Panel body = new Panel();
 
         readonly TextBox folderBox = new TextBox();
         readonly Label folderStatus = new Label();
@@ -376,7 +383,7 @@ namespace FFRRandomizerGui
             BackColor = Theme.Ground;
             ForeColor = Theme.Text;
             Font = Theme.Ui(10f, FontStyle.Regular);
-            ClientSize = new Size(560, 936);
+            ClientSize = new Size(560, FullHeight);
             using (Stream icon = typeof(MainForm).Assembly.GetManifestResourceStream("FFRRandomizerGui.icon.ico"))
             {
                 if (icon != null)
@@ -393,9 +400,54 @@ namespace FFRRandomizerGui
             y = BuildQuantity(y);
             BuildComingLater(y);
             BuildFooter();
+            BuildBody();
 
             LoadState();
             ActiveControl = createButton;
+        }
+
+        // Moves everything between the header and the footer into the body
+        // panel, and pins the footer to the bottom edge.
+        void BuildBody()
+        {
+            int footerTop = FullHeight - FooterHeight;
+            body.AutoScroll = true;
+            body.BackColor = Theme.Ground;
+            body.Location = new Point(0, HeaderHeight + 1);
+            body.Size = new Size(ClientSize.Width, footerTop - HeaderHeight - 1);
+            body.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            List<Control> settings = new List<Control>();
+            foreach (Control control in Controls)
+            {
+                if (control.Top > HeaderHeight && control.Top < footerTop)
+                {
+                    settings.Add(control);
+                }
+                else if (control.Top >= footerTop)
+                {
+                    control.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+                }
+            }
+            foreach (Control control in settings)
+            {
+                Controls.Remove(control);
+                control.Top -= HeaderHeight + 1;
+                body.Controls.Add(control);
+            }
+            Controls.Add(body);
+        }
+
+        // Shrinks the window to fit the screen, for example 1080p at 125% or more.
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            Rectangle area = Screen.FromControl(this).WorkingArea;
+            if (Height > area.Height)
+            {
+                Height = area.Height;
+                Location = new Point(area.Left + (area.Width - Width) / 2, area.Top);
+                Invalidate();
+            }
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -407,7 +459,8 @@ namespace FFRRandomizerGui
             using (Pen line = new Pen(Theme.Border))
             {
                 g.DrawLine(line, 0, 52 * s, ClientSize.Width, 52 * s);
-                g.DrawLine(line, 0, 812 * s, ClientSize.Width, 812 * s);
+                float footerTop = ClientSize.Height - FooterHeight * s;
+                g.DrawLine(line, 0, footerTop, ClientSize.Width, footerTop);
             }
             // Crystal mark beside the title.
             using (Pen pen = new Pen(Theme.Accent, 1.8f * s))

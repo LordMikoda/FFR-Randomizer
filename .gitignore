@@ -1,0 +1,5 @@
+gui/build/
+release/*/
+*.zip
+mod/FFRRandomizer/Randomizer.txt
+mod/FFRRandomizer/Spoiler_*

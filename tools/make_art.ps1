@@ -185,7 +185,16 @@ function Banner($w, $h, $orbit, $tx, $ty, $k, $file) {
     $g.DrawString("FFR Randomizer", $title, $textBrush, $tx, $ty)
     $g.DrawString("for Final Fantasy Resonance", $sub, $mutedBrush, ($tx + 8 * $k), ($ty + 150 * $k))
     $g.FillRectangle($accentBrush, ($tx + 12 * $k), ($ty + 260 * $k), (120 * $k), [Math]::Max(3, 6 * $k))
-    $g.DrawString(("Chests", "Drops", "Steals", "Shops", "Visions", "Enemies") -join $dot, $small, $textBrush, ($tx + 8 * $k), ($ty + 300 * $k))
+    # The feature lines shrink together if the longer one would run off the edge.
+    $features = ("Chests", "Drops", "Steals", "Shops", "Visions", "Enemies", "Bosses") -join $dot
+    $room = $w - ($tx + 8 * $k) - 40 * $k
+    $wide = $g.MeasureString($features, $small).Width
+    if ($wide -gt $room) {
+        $fit = New-Object System.Drawing.Font $small.FontFamily, ([float]($small.Size * $room / $wide)), $regular, ([System.Drawing.GraphicsUnit]::Pixel)
+        $small.Dispose()
+        $small = $fit
+    }
+    $g.DrawString($features, $small, $textBrush, ($tx + 8 * $k), ($ty + 300 * $k))
     $g.DrawString(("Seeded runs", "Spoiler log", "No game files changed") -join $dot, $small, $mutedBrush, ($tx + 8 * $k), ($ty + 360 * $k))
     $g.Dispose()
     $bmp.Save((Join-Path $art $file), [System.Drawing.Imaging.ImageFormat]::Png)

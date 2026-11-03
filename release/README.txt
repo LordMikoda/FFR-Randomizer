@@ -25,6 +25,17 @@ make a new file and restart the game.
 
 Running Setup again updates the mod and keeps your Randomizer File.
 
+Sharing and checking a run
+--------------------------
+The settings code under the seed holds the seed and every option in one
+line, such as FFR1-0007ZQZ-49353958654. Copy sends it; Paste code loads a
+friend's code, then Create Randomizer File saves it.
+
+After the game starts, the card above Create shows whether it applied your
+file, how many changes it made and any errors, plus a seed check of four
+words. Two players with the same seed check have the same run. The card
+also says when the game is still on an older file and needs a restart.
+
 Enemies and bosses (experimental)
 ---------------------------------
 Both are off by default; turn them on in the app. Random encounter enemies

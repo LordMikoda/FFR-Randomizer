@@ -19,7 +19,8 @@ It's a UE4SS Lua mod that changes the game's tables in memory while the game run
 - **We are Chaos (off by default):** fully random stats, swapped weapon and armor types, enemies at full strength, shops that sell anything, and story items in the shuffle. These can make a run unwinnable.
 - **Enemies (experimental, off by default):** random encounter enemies swap one-for-one with enemies of the same size, taking the level, HP, stats, EXP, Gil, drops and steals of the one they replace.
 - **Bosses (experimental, off by default):** boss fights swap bosses. The new boss keeps its own abilities and takes the replaced boss's stats and rewards. Lose-on-purpose and multi-phase fights stay put.
-- **Spoiler log:** a text file listing where everything went.
+- **Spoiler log:** a text file listing where everything went, with enemies and bosses by name.
+- **Sharing:** a settings code (`FFR1-0007ZQZ-49353958654`) holds the seed and every option, and a four-word seed check confirms two players got the same shuffle. The app shows whether the game applied the file and warns when the mod and app versions differ.
 
 ## Install
 1. Install [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) for the game (a build that supports Unreal Engine 5.6).

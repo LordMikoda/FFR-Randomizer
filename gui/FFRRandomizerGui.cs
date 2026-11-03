@@ -16,7 +16,7 @@ using Microsoft.Win32;
 
 [assembly: System.Reflection.AssemblyTitle("FFR Randomizer")]
 [assembly: System.Reflection.AssemblyProduct("FFR Randomizer")]
-[assembly: System.Reflection.AssemblyVersion("0.5.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.6.0.0")]
 
 namespace FFRRandomizerGui
 {
@@ -72,8 +72,31 @@ namespace FFRRandomizerGui
             "character_finishers={11}\n" +
             "mix_character_moves={12}\n" +
             "character_stats={13}\n" +
+            "# Gear and enemies.\n" +
+            "gear_stats={14}\n" +
+            "gear_passives={15}\n" +
+            "enemy_weaknesses={16}\n" +
+            "status_resistances={17}\n" +
+            "enemy_passives={18}\n" +
+            "# normal, half or double\n" +
+            "encounter_rate={19}\n" +
+            "# We are Chaos. These can make a run unwinnable.\n" +
+            "random_stats={20}\n" +
+            "swap_gear_types={21}\n" +
+            "full_strength={22}\n" +
+            "shops_sell_anything={23}\n" +
+            "story_items={24}\n" +
             "# default, 9 or 50. Weapons, armor and accessories always stay at 1.\n" +
-            "chest_quantity={14}\n";
+            "chest_quantity={25}\n";
+
+        // The keys of the on/off lines, in the template's order after the seed.
+        public static readonly string[] ToggleKeys = {
+            "items", "shops", "visions", "enemies", "bosses",
+            "abilities", "mix_physical_magic", "finishers", "supports",
+            "character_moves", "character_finishers", "mix_character_moves", "character_stats",
+            "gear_stats", "gear_passives", "enemy_weaknesses", "status_resistances", "enemy_passives" };
+        public static readonly string[] ChaosKeys = {
+            "random_stats", "swap_gear_types", "full_strength", "shops_sell_anything", "story_items" };
 
         public static string ModDir(string gameDir)
         {
@@ -174,17 +197,13 @@ namespace FFRRandomizerGui
             return values;
         }
 
-        public static void WriteSettings(string gameDir, string seed, bool items, bool shops, bool visions, bool enemies, bool bosses,
-            bool abilities, bool mixAbilities, bool finishers, bool supports,
-            bool moves, bool characterFinishers, bool mixCharacters, bool stats, string quantity)
+        // values: the seed, then the template's values in order, already as text.
+        public static void WriteSettings(string gameDir, string[] values)
         {
-            string text = string.Format(Template, seed, OnOff(items), OnOff(shops), OnOff(visions), OnOff(enemies), OnOff(bosses),
-                OnOff(abilities), OnOff(mixAbilities), OnOff(finishers), OnOff(supports),
-                OnOff(moves), OnOff(characterFinishers), OnOff(mixCharacters), OnOff(stats), quantity);
-            File.WriteAllText(SettingsFile(gameDir), text, new UTF8Encoding(false));
+            File.WriteAllText(SettingsFile(gameDir), string.Format(Template, (object[])values), new UTF8Encoding(false));
         }
 
-        static string OnOff(bool value)
+        public static string OnOff(bool value)
         {
             return value ? "on" : "off";
         }
@@ -536,6 +555,19 @@ namespace FFRRandomizerGui
         readonly ToggleSwitch characterFinishersToggle = new ToggleSwitch();
         readonly ToggleSwitch mixCharactersToggle = new ToggleSwitch();
         readonly ToggleSwitch statsToggle = new ToggleSwitch();
+        readonly ToggleSwitch gearStatsToggle = new ToggleSwitch();
+        readonly ToggleSwitch gearPassivesToggle = new ToggleSwitch();
+        readonly ToggleSwitch weaknessesToggle = new ToggleSwitch();
+        readonly ToggleSwitch statusToggle = new ToggleSwitch();
+        readonly ToggleSwitch enemyPassivesToggle = new ToggleSwitch();
+        readonly ToggleSwitch randomStatsToggle = new ToggleSwitch();
+        readonly ToggleSwitch swapGearToggle = new ToggleSwitch();
+        readonly ToggleSwitch fullStrengthToggle = new ToggleSwitch();
+        readonly ToggleSwitch shopsAnythingToggle = new ToggleSwitch();
+        readonly ToggleSwitch storyItemsToggle = new ToggleSwitch();
+        readonly RadioButton[] encounterButtons = new RadioButton[3];
+        readonly string[] encounterValues = { "normal", "half", "double" };
+        readonly Label encounterHelp = new Label();
         readonly RadioButton[] quantityButtons = new RadioButton[3];
         readonly string[] quantityValues = { "default", "9", "50" };
         readonly Label quantityHelp = new Label();
@@ -606,21 +638,22 @@ namespace FFRRandomizerGui
             ActiveControl = createButton;
         }
 
-        // The three tabs. Options marked LATER are shown but can't be turned on yet.
+        // The three tabs. NEW marks what this version added.
         void BuildTabs()
         {
             OptionTab light = AddTab("We Are the Light");
             light.Wide.Add(BuildSection(y => AddNote("The randomizer as intended: everything shuffles, every character and " +
                 "Vision stays playable, and the story can always be finished.", y)));
             light.Left.Add(BuildSection(BuildShuffles));
-            light.Left.Add(BuildSection(BuildQuantity));
+            light.Left.Add(BuildSection(y => BuildChoice("Chest quantity", y, new[] { "Default", "Up to 9", "Up to 50" },
+                quantityButtons, quantityHelp)));
             light.Right.Add(BuildSection(y => AddToggles(light, "Visions", y,
                 Row("Vision abilities", "Abilities and passives swap among Physical or Magic Visions.", abilitiesToggle),
-                Row("Supports stay supports", "Fina, Leah, Ayaka and Y’shtola keep 5 or more healing abilities.", supportsToggle),
+                Row("Supports stay supports", "Fina, Leah, Ayaka and Y\u2019shtola keep 5 or more healing abilities.", supportsToggle),
                 Row("Vision finishers", "The 26 Vision finishers trade places.", finishersToggle))));
             light.Right.Add(BuildSection(y => AddToggles(light, "Characters", y,
-                Row("Character moves", "Level-up moves swap among characters of the same attack type.", movesToggle, "NEW"),
-                Row("Character finishers", "Finishers swap among characters of the same attack type.", characterFinishersToggle, "NEW"))));
+                Row("Character moves", "Level-up moves swap among characters of the same attack type.", movesToggle),
+                Row("Character finishers", "Finishers swap among characters of the same attack type.", characterFinishersToggle))));
             light.Toggles.AddRange(new[] { itemsToggle, shopsToggle, visionsToggle, enemiesToggle, bossesToggle });
 
             OptionTab become = AddTab("We must BECOME Chaos");
@@ -628,32 +661,47 @@ namespace FFRRandomizerGui
                 "taken away for good.", y)));
             become.Left.Add(BuildSection(y => AddToggles(become, "Visions and characters", y,
                 Row("Mix Physical and Magic", "Vision abilities come from all 26 Visions.", mixToggle),
-                Row("Mix character moves", "Moves and finishers swap across Physical and Magic characters.", mixCharactersToggle, "NEW"),
-                Row("Random character stats", "Five main stats trade growth curves per character. HP and MP stay.", statsToggle, "NEW"))));
+                Row("Mix character moves", "Moves and finishers swap across Physical and Magic characters.", mixCharactersToggle),
+                Row("Random character stats", "Five main stats trade growth curves per character. HP and MP stay.", statsToggle))));
             become.Left.Add(BuildSection(y => AddToggles(become, "Gear", y,
-                Row("Gear stats", "Weapon and armor stats shuffle within each gear type.", null, "LATER"),
-                Row("Gear passives", "Passives on gear come from other gear.", null, "LATER"))));
+                Row("Gear stats", "Gear of one kind trades stat sets. Prices stay.", gearStatsToggle, "NEW"),
+                Row("Gear passives", "Passives swap among weapons, armor or accessories.", gearPassivesToggle, "NEW"))));
             become.Right.Add(BuildSection(y => AddToggles(become, "Enemies", y,
-                Row("Enemy weaknesses", "Each enemy gets new elemental weaknesses.", null, "LATER"),
-                Row("Status resistances", "Enemies resist different ailments.", null, "LATER"),
-                Row("Enemy passives", "Enemy passives come from other enemies.", null, "LATER"),
-                Row("Encounter rate", "Normal, half or double random battles.", null, "LATER"))));
+                Row("Enemy weaknesses", "Each enemy\u2019s element weaknesses and resistances trade places.", weaknessesToggle, "NEW"),
+                Row("Status resistances", "Enemies resist different ailments. Bosses keep theirs.", statusToggle, "NEW"),
+                Row("Enemy passives", "Passives swap among regular enemies. Bosses keep theirs.", enemyPassivesToggle, "NEW"))));
+            become.Right.Add(BuildSection(y => BuildChoice("Encounter rate", y, new[] { "Normal", "Half", "Double" },
+                encounterButtons, encounterHelp)));
 
             OptionTab chaos = AddTab("We are Chaos");
             chaos.Wide.Add(BuildSection(y => AddNote("No guard rails. All off by default.", y)));
             chaos.Wide.Add(BuildSection(BuildChaosWarning));
             chaos.Left.Add(BuildSection(y => AddToggles(chaos, "Characters and gear", y,
-                Row("Fully random stats", "Any character can end up with any stats, no budget.", null, "LATER"),
-                Row("Equip anything", "Every character can wear every weapon and armor type.", null, "LATER"))));
+                Row("Fully random stats", "Every stat curve, HP and MP too, comes from anyone. No budget.", randomStatsToggle, "NEW"),
+                Row("Swap gear types", "Characters trade weapon and armor types. Rain might use a bow.", swapGearToggle, "NEW"))));
             chaos.Left.Add(BuildSection(y => AddToggles(chaos, "Enemies", y,
-                Row("Enemies at full strength", "Swapped enemies and bosses keep their own stats.", null, "LATER"))));
+                Row("Enemies at full strength", "Swapped enemies and bosses keep their own stats.", fullStrengthToggle, "NEW"))));
             chaos.Right.Add(BuildSection(y => AddToggles(chaos, "Items and shops", y,
-                Row("Shops sell anything", "Any item can turn up in any shop, at its game price.", null, "LATER"),
-                Row("Story items in the shuffle", "Key and quest items move too. Can softlock the story.", null, "LATER"))));
+                Row("Shops sell anything", "Any item with a price can turn up in any shop.", shopsAnythingToggle, "NEW"),
+                Row("Story items in the shuffle", "Key and quest items move too. Can softlock the story.", storyItemsToggle, "NEW"))));
 
             abilitiesToggle.Changed += delegate { UpdateOptions(); };
             movesToggle.Changed += delegate { UpdateOptions(); };
             characterFinishersToggle.Changed += delegate { UpdateOptions(); };
+            statsToggle.Changed += delegate { UpdateOptions(); };
+            randomStatsToggle.Changed += delegate { UpdateOptions(); };
+        }
+
+        // The on/off switches in the settings file's order (Game.ToggleKeys,
+        // then Game.ChaosKeys).
+        ToggleSwitch[] SettingToggles()
+        {
+            return new[] {
+                itemsToggle, shopsToggle, visionsToggle, enemiesToggle, bossesToggle,
+                abilitiesToggle, mixToggle, finishersToggle, supportsToggle,
+                movesToggle, characterFinishersToggle, mixCharactersToggle, statsToggle,
+                gearStatsToggle, gearPassivesToggle, weaknessesToggle, statusToggle, enemyPassivesToggle,
+                randomStatsToggle, swapGearToggle, fullStrengthToggle, shopsAnythingToggle, storyItemsToggle };
         }
 
         OptionTab AddTab(string name)
@@ -978,7 +1026,7 @@ namespace FFRRandomizerGui
         void BuildHeader()
         {
             AddLabel("FFR Randomizer", 48, 14, 300, Theme.Ui(12.5f, FontStyle.Bold), Theme.Text);
-            Label version = AddLabel("v0.5.0", 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
+            Label version = AddLabel("v0.6.0", 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
             version.TextAlign = ContentAlignment.TopRight;
         }
 
@@ -1094,6 +1142,8 @@ namespace FFRRandomizerGui
             mixToggle.Enabled = abilitiesToggle.On;
             supportsToggle.Enabled = abilitiesToggle.On || movesToggle.On;
             mixCharactersToggle.Enabled = movesToggle.On || characterFinishersToggle.On;
+            // Fully random stats replaces the budget shuffle.
+            statsToggle.Enabled = !randomStatsToggle.On;
             UpdateCounts();
         }
 
@@ -1185,15 +1235,14 @@ namespace FFRRandomizerGui
             card.Controls.Add(toggle);
         }
 
-        int BuildQuantity(int y)
+        int BuildChoice(string heading, int y, string[] labels, RadioButton[] buttons, Label help)
         {
-            AddHeading("Chest quantity", y);
+            AddHeading(heading, y);
             Card card = new Card();
             card.Radius = 10;
             card.Location = new Point(Pad, y + 22);
             card.Size = new Size(ContentWidth, 48);
             target.Controls.Add(card);
-            string[] labels = { "Default", "Up to 9", "Up to 50" };
             int width = (ContentWidth - 8 - 8) / 3;
             for (int i = 0; i < 3; i++)
             {
@@ -1206,35 +1255,36 @@ namespace FFRRandomizerGui
                 option.TextAlign = ContentAlignment.MiddleCenter;
                 option.Font = Theme.Ui(10.5f, FontStyle.Bold);
                 option.Text = labels[i];
+                option.AccessibleName = heading + ": " + labels[i];
                 option.Location = new Point(4 + i * (width + 4), 4);
                 option.Size = new Size(width, 40);
                 option.Cursor = Cursors.Hand;
-                option.CheckedChanged += delegate { UpdateQuantityLook(); ClearSaved(); };
-                quantityButtons[i] = option;
+                option.CheckedChanged += delegate { UpdateChoices(); ClearSaved(); };
+                buttons[i] = option;
                 card.Controls.Add(option);
             }
-            card.Resize += delegate { LayOutQuantity(card); };
-            quantityHelp.Location = new Point(Pad, y + 76);
-            quantityHelp.Size = new Size(ContentWidth, 20);
-            quantityHelp.Font = Theme.Ui(9.5f, FontStyle.Regular);
-            quantityHelp.ForeColor = Theme.Muted;
-            quantityHelp.BackColor = Color.Transparent;
-            target.Controls.Add(quantityHelp);
+            card.Resize += delegate { LayOutChoice(card, buttons); };
+            help.Location = new Point(Pad, y + 76);
+            help.Size = new Size(ContentWidth, 20);
+            help.Font = Theme.Ui(9.5f, FontStyle.Regular);
+            help.ForeColor = Theme.Muted;
+            help.BackColor = Color.Transparent;
+            target.Controls.Add(help);
             return y + 108;
         }
 
         // The three buttons share the card's width, with the gap they start with.
-        void LayOutQuantity(Card card)
+        static void LayOutChoice(Card card, RadioButton[] buttons)
         {
-            if (quantityButtons[2] == null)
+            if (buttons[2] == null)
             {
                 return;
             }
-            int gap = quantityButtons[0].Top;
+            int gap = buttons[0].Top;
             int width = (card.ClientSize.Width - 4 * gap) / 3;
             for (int i = 0; i < 3; i++)
             {
-                quantityButtons[i].SetBounds(gap + i * (width + gap), gap, width, quantityButtons[i].Height);
+                buttons[i].SetBounds(gap + i * (width + gap), gap, width, buttons[i].Height);
             }
         }
 
@@ -1272,22 +1322,39 @@ namespace FFRRandomizerGui
             spoiler.Click += delegate { OpenSpoiler(); };
         }
 
-        void UpdateQuantityLook()
+        void UpdateChoices()
         {
-            int picked = 0;
-            for (int i = 0; i < 3; i++)
+            int quantity = Picked(quantityButtons);
+            int encounter = Picked(encounterButtons);
+            foreach (RadioButton[] buttons in new[] { quantityButtons, encounterButtons })
             {
-                RadioButton option = quantityButtons[i];
-                option.BackColor = option.Checked ? Theme.Accent : Theme.Panel;
-                option.ForeColor = option.Checked ? Theme.AccentText : Theme.Text;
-                if (option.Checked)
+                foreach (RadioButton option in buttons)
                 {
-                    picked = i;
+                    if (option != null)
+                    {
+                        option.BackColor = option.Checked ? Theme.Accent : Theme.Panel;
+                        option.ForeColor = option.Checked ? Theme.AccentText : Theme.Text;
+                    }
                 }
             }
-            quantityHelp.Text = picked == 0
+            quantityHelp.Text = quantity == 0
                 ? "Each chest keeps its normal amount. Gear is always 1."
-                : "Each chest gives 1 to " + quantityValues[picked] + " of its item. Gear is always 1.";
+                : "Each chest gives 1 to " + quantityValues[quantity] + " of its item. Gear is always 1.";
+            encounterHelp.Text = encounter == 0 ? "Random battles as often as usual."
+                : encounter == 1 ? "Half as many random battles: twice the walk between them."
+                : "Twice as many random battles: half the walk between them.";
+        }
+
+        static int Picked(RadioButton[] buttons)
+        {
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                if (buttons[i] != null && buttons[i].Checked)
+                {
+                    return i;
+                }
+            }
+            return 0;
         }
 
         string NewSeed()
@@ -1354,25 +1421,32 @@ namespace FFRRandomizerGui
             Dictionary<string, string> values = ModInstalled ? Game.ReadSettings(gameDir) : new Dictionary<string, string>();
             string seed;
             seedBox.Text = values.TryGetValue("seed", out seed) && seed != "" ? seed : NewSeed();
-            itemsToggle.On = Flag(values, "items", true);
-            shopsToggle.On = Flag(values, "shops", true);
-            visionsToggle.On = Flag(values, "visions", true);
-            enemiesToggle.On = Flag(values, "enemies", false);
-            bossesToggle.On = Flag(values, "bosses", false);
-            abilitiesToggle.On = Flag(values, "abilities", false);
-            mixToggle.On = Flag(values, "mix_physical_magic", false);
-            supportsToggle.On = Flag(values, "supports", false);
-            finishersToggle.On = Flag(values, "finishers", false);
-            movesToggle.On = Flag(values, "character_moves", false);
-            characterFinishersToggle.On = Flag(values, "character_finishers", false);
-            mixCharactersToggle.On = Flag(values, "mix_character_moves", false);
-            statsToggle.On = Flag(values, "character_stats", false);
+            // Items, shops and Visions came first and default to on; the rest to off.
+            ToggleSwitch[] toggles = SettingToggles();
+            string[] keys = AllToggleKeys();
+            for (int i = 0; i < toggles.Length; i++)
+            {
+                toggles[i].On = Flag(values, keys[i], i < 3);
+            }
             UpdateOptions();
-            string quantity;
-            int index = values.TryGetValue("chest_quantity", out quantity) ? Array.IndexOf(quantityValues, quantity.ToLowerInvariant()) : 0;
-            quantityButtons[index < 0 ? 0 : index].Checked = true;
-            UpdateQuantityLook();
+            PickChoice(values, "chest_quantity", quantityValues, quantityButtons);
+            PickChoice(values, "encounter_rate", encounterValues, encounterButtons);
+            UpdateChoices();
             ClearSaved();
+        }
+
+        static string[] AllToggleKeys()
+        {
+            List<string> keys = new List<string>(Game.ToggleKeys);
+            keys.AddRange(Game.ChaosKeys);
+            return keys.ToArray();
+        }
+
+        static void PickChoice(Dictionary<string, string> values, string key, string[] choices, RadioButton[] buttons)
+        {
+            string value;
+            int index = values.TryGetValue(key, out value) ? Array.IndexOf(choices, value.ToLowerInvariant()) : 0;
+            buttons[index < 0 ? 0 : index].Checked = true;
         }
 
         static bool Flag(Dictionary<string, string> values, string key, bool fallback)
@@ -1402,18 +1476,6 @@ namespace FFRRandomizerGui
                     LoadState();
                 }
             }
-        }
-
-        string SelectedQuantity()
-        {
-            for (int i = 0; i < 3; i++)
-            {
-                if (quantityButtons[i].Checked)
-                {
-                    return quantityValues[i];
-                }
-            }
-            return "default";
         }
 
         void CreateFile()
@@ -1447,9 +1509,21 @@ namespace FFRRandomizerGui
             }
             try
             {
-                Game.WriteSettings(gameDir, seed, itemsToggle.On, shopsToggle.On, visionsToggle.On, enemiesToggle.On, bossesToggle.On,
-                    abilitiesToggle.On, mixToggle.On, finishersToggle.On, supportsToggle.On,
-                    movesToggle.On, characterFinishersToggle.On, mixCharactersToggle.On, statsToggle.On, SelectedQuantity());
+                // The seed, the gear and enemy toggles, encounter rate, the Chaos
+                // toggles and chest quantity, in the template's order.
+                ToggleSwitch[] toggles = SettingToggles();
+                List<string> values = new List<string> { seed };
+                for (int i = 0; i < Game.ToggleKeys.Length; i++)
+                {
+                    values.Add(Game.OnOff(toggles[i].On));
+                }
+                values.Add(encounterValues[Picked(encounterButtons)]);
+                for (int i = Game.ToggleKeys.Length; i < toggles.Length; i++)
+                {
+                    values.Add(Game.OnOff(toggles[i].On));
+                }
+                values.Add(quantityValues[Picked(quantityButtons)]);
+                Game.WriteSettings(gameDir, values.ToArray());
                 GuiConfig.SaveGameDir(gameDir);
                 ShowSaved("Randomizer File saved. Start the game and begin a New Game. Keep this file for the whole playthrough.", true);
             }

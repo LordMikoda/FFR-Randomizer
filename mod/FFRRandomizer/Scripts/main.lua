@@ -3,7 +3,7 @@
 -- applies it in memory. Nothing on disk in the game changes, and removing this
 -- folder undoes everything.
 
-local MOD_VERSION = "0.5.0"
+local MOD_VERSION = "0.6.0"
 local LOG_PREFIX = "[FFRRandomizer] "
 local CHECK_INTERVAL_MS = 3000
 
@@ -35,6 +35,11 @@ if not hasMoves or type(CHARACTER_MOVES) ~= "table" then
     CHARACTER_MOVES = nil
 end
 
+local hasChaosData, CHAOS_DATA = pcall(require, "ChaosData")
+if not hasChaosData or type(CHAOS_DATA) ~= "table" then
+    CHAOS_DATA = { elements = {}, statuses = {}, stats = {}, passives = {} }
+end
+
 local TABLES = {
     chests = "/Game/Datatable/Map/Gimmick/TreasureBox/CDT_MapGimmickTreasureBox.CDT_MapGimmickTreasureBox",
     units = "/Game/Datatable/Unit/DT_UnitParameter.DT_UnitParameter",
@@ -48,6 +53,14 @@ local TABLES = {
     synchro = "/Game/Datatable/Item/Vision/DT_VisionSynchroMasteryData.DT_VisionSynchroMasteryData",
     skills = "/Game/Datatable/Skill/DT_SkillData.DT_SkillData",
     passives = "/Game/Datatable/Skill/DT_PassiveSkillData.DT_PassiveSkillData",
+    equipment = "/Game/Datatable/Item/DT_EquipmentItemData.DT_EquipmentItemData",
+    playables = "/Game/Datatable/Unit/DT_PlayableUnitParameter.DT_PlayableUnitParameter",
+    maps = "/Game/Datatable/Map/CDT_MapData_Prod.CDT_MapData_Prod",
+}
+-- Tables only some options need, by the setting that needs them.
+local NEEDED_BY = {
+    playables = function(settings) return settings.swapGear end,
+    maps = function(settings) return settings.encounterRate ~= "normal" end,
 }
 -- Tables the plan can do without, the ones only the enemy and boss shuffles
 -- need, and the ones only the Vision ability shuffle needs.
@@ -94,6 +107,19 @@ local ENEMY_SPOT_FIELDS = {
     "DropNormalItem", "DropNormalItemRate", "DropRareItem", "DropRareItemRate",
     "StealNormalItem", "StealRareItem", "StealItemRate",
 }
+-- With Enemies at full strength, a swapped-in enemy or boss keeps its own
+-- stats and takes only the spot's rewards, so EXP and Gil still fit the area.
+local ENEMY_REWARD_FIELDS = {
+    "Experience", "Money",
+    "DropNormalItem", "DropNormalItemRate", "DropRareItem", "DropRareItemRate",
+    "StealNormalItem", "StealRareItem", "StealItemRate",
+}
+-- Story items in the shuffle adds these kinds, and the items quests take.
+local STORY_KINDS = { Valuable = true, Artifact = true }
+-- Encounter rate stretches or shrinks the distance walked between battles.
+local ENCOUNTER_FIELDS = { "encountMinMovementLength", "encountMaxMovementLength",
+    "chocoboEncountMinMovementLength", "chocoboEncountMaxMovementLength" }
+local ENCOUNTER_SCALE = { normal = 1, half = 2, double = 0.5 }
 local ENEMY_CATEGORY = 2
 local BOSS_CATEGORY = 3
 
@@ -156,6 +182,20 @@ character_moves=%s
 character_finishers=%s
 mix_character_moves=%s
 character_stats=%s
+# Gear and enemies.
+gear_stats=%s
+gear_passives=%s
+enemy_weaknesses=%s
+status_resistances=%s
+enemy_passives=%s
+# normal, half or double
+encounter_rate=%s
+# We are Chaos. These can make a run unwinnable.
+random_stats=%s
+swap_gear_types=%s
+full_strength=%s
+shops_sell_anything=%s
+story_items=%s
 # default, 9 or 50. Weapons, armor and accessories always stay at 1.
 chest_quantity=%s
 ]]
@@ -175,7 +215,11 @@ local function writeSettings(settings)
         onOff(settings.shops), onOff(settings.visions), onOff(settings.enemies), onOff(settings.bosses),
         onOff(settings.abilities), onOff(settings.mixAbilities), onOff(settings.finishers),
         onOff(settings.supports), onOff(settings.characterMoves), onOff(settings.characterFinishers),
-        onOff(settings.mixCharacters), onOff(settings.characterStats), settings.chestQuantity))
+        onOff(settings.mixCharacters), onOff(settings.characterStats),
+        onOff(settings.gearStats), onOff(settings.gearPassives), onOff(settings.weaknesses),
+        onOff(settings.statusResists), onOff(settings.enemyPassives), settings.encounterRate,
+        onOff(settings.randomStats), onOff(settings.swapGear), onOff(settings.fullStrength),
+        onOff(settings.shopsAnything), onOff(settings.storyItems), settings.chestQuantity))
     file:close()
 end
 
@@ -213,11 +257,26 @@ local function readSettings()
         characterFinishers = flag("character_finishers", "off"),
         mixCharacters = flag("mix_character_moves", "off"),
         characterStats = flag("character_stats", "off"),
+        gearStats = flag("gear_stats", "off"),
+        gearPassives = flag("gear_passives", "off"),
+        weaknesses = flag("enemy_weaknesses", "off"),
+        statusResists = flag("status_resistances", "off"),
+        enemyPassives = flag("enemy_passives", "off"),
+        encounterRate = (values.encounter_rate or "normal"):lower(),
+        randomStats = flag("random_stats", "off"),
+        swapGear = flag("swap_gear_types", "off"),
+        fullStrength = flag("full_strength", "off"),
+        shopsAnything = flag("shops_sell_anything", "off"),
+        storyItems = flag("story_items", "off"),
         chestQuantity = (values.chest_quantity or "default"):lower(),
     }
     if CHEST_CAPS[settings.chestQuantity] == nil then
         log("Unknown chest_quantity '" .. settings.chestQuantity .. "', using default.")
         settings.chestQuantity = "default"
+    end
+    if ENCOUNTER_SCALE[settings.encounterRate] == nil then
+        log("Unknown encounter_rate '" .. settings.encounterRate .. "', using normal.")
+        settings.encounterRate = "normal"
     end
     -- A blank seed gets a new one, saved straight away so every launch of this
     -- playthrough keeps the same shuffle.
@@ -306,6 +365,31 @@ end
 
 local function isTrue(value)
     return value == true or value == 1
+end
+
+-- TMap fields (gear stats, resistances). UE4SS hands keys and values to
+-- ForEach wrapped, with :get() giving the plain value; Find may too.
+local function plainValue(value)
+    if type(value) == "userdata" or type(value) == "table" then
+        local ok, plain = pcall(function() return value:get() end)
+        if ok and plain ~= nil then
+            return plain
+        end
+    end
+    return value
+end
+
+-- A map's entries sorted by key, so a shuffle never depends on map order.
+local function mapEntries(map)
+    local entries = {}
+    if map == nil then
+        return entries
+    end
+    map:ForEach(function(key, value)
+        table.insert(entries, { key = plainValue(key), value = plainValue(value) })
+    end)
+    table.sort(entries, function(a, b) return a.key < b.key end)
+    return entries
 end
 
 -- A composite table keeps its own copy of rows, so its parent tables get the
@@ -410,6 +494,19 @@ local function addPatch(plan, family, row, field, value, array, index, sub)
     table.insert(plan.patches, patch)
 end
 
+-- Sets one existing key of the TMap row[field].
+local function addMapPatch(plan, family, row, field, mapKey, value)
+    local key = table.concat({ family, row, field, "map", tostring(mapKey) }, "|")
+    local existing = plan.patchIndex[key]
+    if existing ~= nil then
+        existing.value = value
+        return
+    end
+    local patch = { family = family, row = row, field = field, value = value, mapKey = mapKey }
+    plan.patchIndex[key] = patch
+    table.insert(plan.patches, patch)
+end
+
 local function addSpoiler(plan, section, line)
     local lines = plan.spoiler[section]
     if lines == nil then
@@ -420,9 +517,16 @@ local function addSpoiler(plan, section, line)
 end
 
 local function shufflePool(plan, settings, tables, catalog, consumed)
+    -- Story items in the shuffle lets key items, artifacts and quest items move too.
     local function canMove(id)
         local info = catalog[id]
-        return info ~= nil and SHUFFLE_KINDS[info.kind] and not consumed[id]
+        if info == nil then
+            return false
+        end
+        if settings.storyItems then
+            return SHUFFLE_KINDS[info.kind] or STORY_KINDS[info.kind]
+        end
+        return SHUFFLE_KINDS[info.kind] and not consumed[id]
     end
     local function isGear(id)
         return catalog[id] ~= nil and catalog[id].kind == "Equipment"
@@ -492,7 +596,7 @@ local function shufflePool(plan, settings, tables, catalog, consumed)
         settings.chestQuantity))
 end
 
-local function shopCategory(info)
+local function itemCategory(info)
     if info.kind == "Equipment" then
         return EQUIPMENT_TYPES[info.equipmentType] or ("Equipment " .. tostring(info.equipmentType))
     end
@@ -501,11 +605,21 @@ end
 
 -- Each slot keeps its category, unlock condition, order limit and price ratio.
 -- Slots selling an item that can't be sold, or that a quest takes, stay as they are.
+-- Shops sell anything drops the categories and the sale and quest checks:
+-- any consumable, gear or seed with a price can turn up in any slot.
 local function shuffleShops(plan, settings, tables, catalog, consumed)
     local function canSell(id)
         local info = catalog[id]
-        return info ~= nil and SHUFFLE_KINDS[info.kind] and info.sellable and info.price > 0
-            and not consumed[id]
+        if info == nil or not SHUFFLE_KINDS[info.kind] or info.price <= 0 then
+            return false
+        end
+        return settings.shopsAnything or (info.sellable and not consumed[id])
+    end
+    local function shopCategory(info)
+        if settings.shopsAnything then
+            return "Any"
+        end
+        return itemCategory(info)
     end
 
     local pools = {}
@@ -635,12 +749,13 @@ local function readUnits(tables)
     return rowOf, category, sizeOf
 end
 
--- The swapped-in unit's row takes the replaced unit's spot fields. Drops and
--- steals come from the item shuffle when it moved them.
-local function moveSpot(plan, tables, rowOf, id, new)
+-- The swapped-in unit's row takes the replaced unit's spot fields: stats and
+-- rewards, or only rewards with Enemies at full strength. Drops and steals
+-- come from the item shuffle when it moved them.
+local function moveSpot(plan, settings, tables, rowOf, id, new)
     local source = tables.units:FindRow(rowOf[id])
     local items = plan.unitItems[rowOf[id]] or {}
-    for _, field in ipairs(ENEMY_SPOT_FIELDS) do
+    for _, field in ipairs(settings.fullStrength and ENEMY_REWARD_FIELDS or ENEMY_SPOT_FIELDS) do
         local value = items[field]
         if value == nil then
             value = source[field]
@@ -724,7 +839,7 @@ local function shuffleEnemies(plan, settings, tables)
         local new = replacement[id]
         if new ~= id then
             moved = moved + 1
-            moveSpot(plan, tables, rowOf, id, new)
+            moveSpot(plan, settings, tables, rowOf, id, new)
         end
         addSpoiler(plan, "Enemies", string.format("Unit %d %s fights in place of unit %d %s (size %s)",
             new, rowOf[new], id, rowOf[id], UNIT_SIZES[sizeOf[id]] or "Unknown"))
@@ -809,7 +924,7 @@ local function shuffleBosses(plan, settings, tables)
         local new = replacement[id]
         if new ~= id then
             moved = moved + 1
-            moveSpot(plan, tables, rowOf, id, new)
+            moveSpot(plan, settings, tables, rowOf, id, new)
         end
         addSpoiler(plan, "Bosses", string.format("Unit %d %s fights in place of unit %d %s (size %s to %s)",
             new, rowOf[new], id, rowOf[id], UNIT_SIZES[sizeOf[new]] or "Unknown", UNIT_SIZES[sizeOf[id]] or "Unknown"))
@@ -1153,7 +1268,8 @@ end
 -- Each character's Attack, Defence, Intelligence, Mind and Agility trade
 -- places, base stats and level-up gains alike, so the total stays the same
 -- and HP and MP are untouched. Rain might grow Intelligence on his Attack
--- curve, for example.
+-- curve, for example. With Fully random stats, every stat curve, HP and MP
+-- included, comes from any character's matching kind of curve, with no budget.
 local function shuffleCharacterStats(plan, settings, tables)
     if CHARACTER_MOVES == nil then
         log("CharacterMoves.lua is missing. Character stats not shuffled.")
@@ -1164,39 +1280,312 @@ local function shuffleCharacterStats(plan, settings, tables)
         local row = tables.units:FindRow(name)
         unitRow[row.ID] = unitRow[row.ID] or name
     end
-    local rng = newRng(settings.seed, "stats")
-    local shuffled = 0
+    local characters = {}
     for _, character in ipairs(CHARACTER_MOVES.characters) do
-        local from = { table.unpack(CHARACTER_STATS) }
-        rng.shuffle(from)
-        local family = "level" .. character.table
-        local dataTable = tables[family]
-        if dataTable ~= nil then
-            shuffled = shuffled + 1
-            for _, name in ipairs(sortedRowNames(dataTable)) do
-                local row = dataTable:FindRow(name)
-                for i, stat in ipairs(CHARACTER_STATS) do
-                    addPatch(plan, family, name, "Add" .. stat, row["Add" .. from[i]])
-                end
-            end
-            local base = unitRow[character.unit]
-            if base ~= nil then
-                local row = tables.units:FindRow(base)
-                for i, stat in ipairs(CHARACTER_STATS) do
-                    addPatch(plan, "units", base, stat, row[from[i]])
-                end
-            end
-            local parts = {}
-            for i, stat in ipairs(CHARACTER_STATS) do
-                if from[i] ~= stat then
-                    table.insert(parts, stat .. " grows like " .. from[i])
-                end
-            end
-            addSpoiler(plan, "Character stats", string.format("%-15s %s", character.name,
-                #parts > 0 and table.concat(parts, ", ") or "unchanged"))
+        if tables["level" .. character.table] ~= nil then
+            table.insert(characters, character)
         end
     end
-    log(string.format("Character stats: %d characters reshuffled.", shuffled))
+    -- Each target stat's source: a character and one of that character's stats.
+    local rng = newRng(settings.seed, settings.randomStats and "random stats" or "stats")
+    local function sourcesFor(character)
+        local sources = {}
+        if settings.randomStats then
+            for _, stat in ipairs(CHARACTER_STATS) do
+                local from = characters[rng.int(#characters)]
+                sources[stat] = { character = from, stat = CHARACTER_STATS[rng.int(#CHARACTER_STATS)] }
+            end
+            for _, stat in ipairs({ "MaxHitPoint", "MaxMagicPoint" }) do
+                sources[stat] = { character = characters[rng.int(#characters)], stat = stat }
+            end
+        else
+            local from = { table.unpack(CHARACTER_STATS) }
+            rng.shuffle(from)
+            for i, stat in ipairs(CHARACTER_STATS) do
+                sources[stat] = { character = character, stat = from[i] }
+            end
+        end
+        return sources
+    end
+    local targets = settings.randomStats
+        and { "Attack", "Defence", "Intelligence", "Mind", "Agility", "MaxHitPoint", "MaxMagicPoint" }
+        or CHARACTER_STATS
+
+    for _, character in ipairs(characters) do
+        local sources = sourcesFor(character)
+        local family = "level" .. character.table
+        for _, name in ipairs(sortedRowNames(tables[family])) do
+            for _, stat in ipairs(targets) do
+                local source = sources[stat]
+                local from = tables["level" .. source.character.table]:FindRow(name)
+                if from ~= nil then
+                    addPatch(plan, family, name, "Add" .. stat, from["Add" .. source.stat])
+                end
+            end
+        end
+        local base = unitRow[character.unit]
+        if base ~= nil then
+            for _, stat in ipairs(targets) do
+                local source = sources[stat]
+                local fromRow = unitRow[source.character.unit]
+                if fromRow ~= nil then
+                    addPatch(plan, "units", base, stat, tables.units:FindRow(fromRow)[source.stat])
+                end
+            end
+        end
+        local parts = {}
+        for _, stat in ipairs(targets) do
+            local source = sources[stat]
+            if source.character ~= character or source.stat ~= stat then
+                local owner = source.character == character and "" or (source.character.name .. "'s ")
+                table.insert(parts, stat .. " grows like " .. owner .. source.stat)
+            end
+        end
+        addSpoiler(plan, "Character stats", string.format("%-15s %s", character.name,
+            #parts > 0 and table.concat(parts, ", ") or "unchanged"))
+    end
+    log(string.format("Character stats: %d characters %s.", #characters,
+        settings.randomStats and "fully randomized" or "reshuffled"))
+end
+
+-- Gear and enemies --------------------------------------------------------
+
+local GEAR_TYPE_NAMES = { [1] = "Great Sword", [2] = "Katana", [3] = "Bow", [4] = "Hammer", [5] = "Grimoire",
+    [6] = "Gun", [7] = "Rod", [8] = "Whip", [9] = "Heavy Armor", [10] = "Light Armor", [11] = "Robe" }
+
+local function passiveName(id)
+    return CHAOS_DATA.passives[id] or abilityName(id)
+end
+
+-- Gear of one kind (Great Swords, Robes and so on) with the same stat keys
+-- trades whole stat sets, so a Bronze Sword might hit like a Crimson Saber.
+-- Prices stay, so a cheap shop sword can be strong.
+local function shuffleGearStats(plan, settings, tables)
+    local groups, groupNames = {}, {}
+    local ok, err = pcall(function()
+        for _, name in ipairs(sortedRowNames(tables.equipment)) do
+            local row = tables.equipment:FindRow(name)
+            local entries = mapEntries(row.params)
+            if #entries > 0 then
+                local keys = {}
+                for _, entry in ipairs(entries) do
+                    table.insert(keys, tostring(entry.key))
+                end
+                local group = tostring(row.equipmentDetailType) .. ":" .. table.concat(keys, ",")
+                if groups[group] == nil then
+                    groups[group] = {}
+                    table.insert(groupNames, group)
+                end
+                table.insert(groups[group], { row = name, id = row.ID, entries = entries })
+            end
+        end
+    end)
+    if not ok then
+        log("Gear stats can't be read (" .. tostring(err) .. "). Gear stats not shuffled.")
+        return
+    end
+    table.sort(groupNames)
+    local rng = newRng(settings.seed, "gear stats")
+    local total, changed = 0, 0
+    for _, group in ipairs(groupNames) do
+        local items = groups[group]
+        local order = {}
+        for i = 1, #items do
+            order[i] = i
+        end
+        rng.shuffle(order)
+        for i, item in ipairs(items) do
+            total = total + 1
+            local source = items[order[i]]
+            if source ~= item then
+                changed = changed + 1
+                local stats = {}
+                for j, entry in ipairs(item.entries) do
+                    addMapPatch(plan, "equipment", item.row, "params", entry.key, source.entries[j].value)
+                    table.insert(stats, string.format("%s %s", CHAOS_DATA.stats[entry.key] or ("Stat " .. tostring(entry.key)),
+                        tostring(source.entries[j].value)))
+                end
+                addSpoiler(plan, "Gear stats", string.format("%s: %s (stats of %s)", itemName(item.id),
+                    table.concat(stats, ", "), itemName(source.id)))
+            end
+        end
+    end
+    log(string.format("Gear stats: %d pieces of gear, %d changed.", total, changed))
+end
+
+-- Passives on gear swap among gear of the same slot (weapons, armor,
+-- accessories), each piece keeping its number of passives, never one twice.
+local function shuffleGearPassives(plan, settings, tables)
+    local slots = {}
+    for _, name in ipairs(sortedRowNames(tables.equipment)) do
+        local row = tables.equipment:FindRow(name)
+        for i, id in ipairs(arrayItems(row.passiveList)) do
+            if id > 0 then
+                table.insert(slots, { row = name, index = i, owner = row.ID, kind = "gear",
+                    slotType = row.EquipmentType, original = id, value = id })
+            end
+        end
+    end
+    local clashes = shuffleOwnedSlots(slots, function(slot) return "type " .. tostring(slot.slotType) end,
+        newRng(settings.seed, "gear passives"), false, itemName)
+    local changed, byItem, order = 0, {}, {}
+    for _, slot in ipairs(slots) do
+        if slot.value ~= slot.original then
+            changed = changed + 1
+            addPatch(plan, "equipment", slot.row, nil, slot.value, "passiveList", slot.index)
+        end
+        if byItem[slot.owner] == nil then
+            byItem[slot.owner] = { now = {}, was = {}, moved = false }
+            table.insert(order, slot.owner)
+        end
+        local item = byItem[slot.owner]
+        table.insert(item.now, passiveName(slot.value))
+        table.insert(item.was, passiveName(slot.original))
+        item.moved = item.moved or slot.value ~= slot.original
+    end
+    for _, id in ipairs(order) do
+        local item = byItem[id]
+        if item.moved then
+            addSpoiler(plan, "Gear passives", string.format("%s: %s   (was %s)", itemName(id),
+                table.concat(item.now, ", "), table.concat(item.was, ", ")))
+        end
+    end
+    log(string.format("Gear passives: %d slots, %d changed, %d clashes left.", #slots, changed, clashes))
+end
+
+-- Within each unit, a resistance map's values trade places between its keys,
+-- so a Fire-weak enemy might be weak to Ice instead, with the same overall
+-- profile. Only units in the given categories change.
+local function shuffleResistances(plan, settings, tables, field, categories, stream, section, names)
+    local rng = newRng(settings.seed, stream)
+    local units, changed = 0, 0
+    local ok, err = pcall(function()
+        for _, name in ipairs(sortedRowNames(tables.units)) do
+            local row = tables.units:FindRow(name)
+            if categories[row.Category] then
+                local entries = mapEntries(row[field])
+                if #entries >= 2 then
+                    units = units + 1
+                    local values = {}
+                    for i, entry in ipairs(entries) do
+                        values[i] = entry.value
+                    end
+                    rng.shuffle(values)
+                    local parts, moved = {}, false
+                    for i, entry in ipairs(entries) do
+                        if values[i] ~= entry.value then
+                            moved = true
+                            addMapPatch(plan, "units", name, field, entry.key, values[i])
+                        end
+                        table.insert(parts, string.format("%s %s", names[entry.key] or tostring(entry.key), tostring(values[i])))
+                    end
+                    if moved then
+                        changed = changed + 1
+                        addSpoiler(plan, section, string.format("Unit %d %s: %s", row.ID, name, table.concat(parts, ", ")))
+                    end
+                end
+            end
+        end
+    end)
+    if not ok then
+        log(section .. " can't be read (" .. tostring(err) .. "). Not shuffled.")
+        return
+    end
+    log(string.format("%s: %d units with two or more entries, %d changed.", section, units, changed))
+end
+
+-- Enemy passives swap among the regular enemies, each keeping its number of
+-- passives. Bosses keep theirs, since boss passives often run the fight.
+local function shuffleEnemyPassives(plan, settings, tables)
+    local slots = {}
+    for _, name in ipairs(sortedRowNames(tables.units)) do
+        local row = tables.units:FindRow(name)
+        if row.Category == ENEMY_CATEGORY then
+            for i, id in ipairs(arrayItems(row.passiveSkillList)) do
+                if id > 0 then
+                    table.insert(slots, { row = name, index = i, owner = name, unit = row.ID, kind = "enemy",
+                        original = id, value = id })
+                end
+            end
+        end
+    end
+    local clashes = shuffleOwnedSlots(slots, function() return "enemies" end, newRng(settings.seed, "enemy passives"),
+        false, function(owner) return owner end)
+    local changed, byUnit, order = 0, {}, {}
+    for _, slot in ipairs(slots) do
+        if slot.value ~= slot.original then
+            changed = changed + 1
+            addPatch(plan, "units", slot.row, nil, slot.value, "passiveSkillList", slot.index)
+        end
+        if byUnit[slot.owner] == nil then
+            byUnit[slot.owner] = { unit = slot.unit, now = {}, moved = false }
+            table.insert(order, slot.owner)
+        end
+        table.insert(byUnit[slot.owner].now, passiveName(slot.value))
+        byUnit[slot.owner].moved = byUnit[slot.owner].moved or slot.value ~= slot.original
+    end
+    for _, owner in ipairs(order) do
+        local unit = byUnit[owner]
+        if unit.moved then
+            addSpoiler(plan, "Enemy passives", string.format("Unit %d %s: %s", unit.unit, owner, table.concat(unit.now, ", ")))
+        end
+    end
+    log(string.format("Enemy passives: %d slots, %d changed, %d clashes left.", #slots, changed, clashes))
+end
+
+-- Characters trade weapon types and armor sets, so Rain might fight with a
+-- bow. Starting gear the new types can't use may come off.
+local function swapGearTypes(plan, settings, tables)
+    local rows = {}
+    for _, name in ipairs(sortedRowNames(tables.playables)) do
+        local row = tables.playables:FindRow(name)
+        table.insert(rows, { name = name, id = row.ID, weapon = row.equipableWeaponType,
+            armor = arrayItems(row.equipableArmorTypeList) })
+    end
+    local order = {}
+    for i = 1, #rows do
+        order[i] = i
+    end
+    newRng(settings.seed, "gear types").shuffle(order)
+    local function nameOf(id)
+        return CHARACTER_MOVES and characterName(id) or ("Unit " .. tostring(id))
+    end
+    for i, row in ipairs(rows) do
+        local source = rows[order[i]]
+        addPatch(plan, "playables", row.name, "equipableWeaponType", source.weapon)
+        local armor = {}
+        for j = 1, #row.armor do
+            local value = source.armor[j] or row.armor[j]
+            addPatch(plan, "playables", row.name, nil, value, "equipableArmorTypeList", j)
+            table.insert(armor, GEAR_TYPE_NAMES[value] or tostring(value))
+        end
+        addSpoiler(plan, "Gear types", string.format("%-15s %s, %s   (%s's)", nameOf(row.id),
+            GEAR_TYPE_NAMES[source.weapon] or tostring(source.weapon), table.concat(armor, " and "), nameOf(source.id)))
+    end
+    log(string.format("Gear types: %d characters swapped.", #rows))
+end
+
+-- Half the rate means walking twice as far between random battles; double
+-- means half as far.
+local function scaleEncounters(plan, settings, tables)
+    local scale = ENCOUNTER_SCALE[settings.encounterRate]
+    local maps = 0
+    for _, name in ipairs(sortedRowNames(tables.maps)) do
+        local row = tables.maps:FindRow(name)
+        local touched = false
+        for _, field in ipairs(ENCOUNTER_FIELDS) do
+            local value = row[field]
+            if type(value) == "number" and value > 0 then
+                addPatch(plan, "maps", name, field, math.max(1, math.floor(value * scale + 0.5)))
+                touched = true
+            end
+        end
+        if touched then
+            maps = maps + 1
+        end
+    end
+    addSpoiler(plan, "Encounter rate", string.format("%s: %d maps changed", settings.encounterRate, maps))
+    log(string.format("Encounter rate: %s, %d maps changed.", settings.encounterRate, maps))
 end
 
 local function writeSpoiler(plan, settings)
@@ -1216,12 +1605,19 @@ local function writeSpoiler(plan, settings)
     file:write(string.format("Character moves: %s   Character finishers: %s   Mix character moves: %s   Character stats: %s\n",
         onOff(settings.characterMoves), onOff(settings.characterFinishers), onOff(settings.mixCharacters),
         onOff(settings.characterStats)))
+    file:write(string.format("Gear stats: %s   Gear passives: %s   Enemy weaknesses: %s   Status resistances: %s   Enemy passives: %s   Encounter rate: %s\n",
+        onOff(settings.gearStats), onOff(settings.gearPassives), onOff(settings.weaknesses),
+        onOff(settings.statusResists), onOff(settings.enemyPassives), settings.encounterRate))
+    file:write(string.format("We are Chaos: Fully random stats: %s   Swap gear types: %s   Enemies at full strength: %s   Shops sell anything: %s   Story items: %s\n",
+        onOff(settings.randomStats), onOff(settings.swapGear), onOff(settings.fullStrength),
+        onOff(settings.shopsAnything), onOff(settings.storyItems)))
     if settings.enemies or settings.bosses then
         file:write("With enemies or bosses on, drops and steals stay with the spot: a unit's list below\n" ..
             "goes to whichever unit fights in its place.\n")
     end
     for _, section in ipairs({ "Visions", "Vision abilities", "Finishers", "Characters", "Character stats",
-        "Bosses", "Enemies", "Chests", "Drops and steals", "Shops" }) do
+        "Gear types", "Gear stats", "Gear passives", "Bosses", "Enemies", "Enemy weaknesses", "Status resistances",
+        "Enemy passives", "Encounter rate", "Chests", "Drops and steals", "Shops" }) do
         local lines = plan.spoiler[section]
         if lines ~= nil then
             file:write("\n== " .. section .. " ==\n")
@@ -1240,7 +1636,8 @@ local function buildPlan(settings)
             and (settings.enemies or settings.bosses or not ENEMY_TABLES[key])
             and (settings.abilities or not ABILITY_TABLES[key])
             and (settings.characterMoves or settings.characterFinishers or settings.characterStats
-                or not CHARACTER_TABLES[key])
+                or settings.randomStats or not CHARACTER_TABLES[key])
+            and (NEEDED_BY[key] == nil or NEEDED_BY[key](settings))
         if tables[key] == nil and needed then
             return nil, path
         end
@@ -1274,8 +1671,31 @@ local function buildPlan(settings)
     if settings.characterMoves or settings.characterFinishers then
         shuffleCharacters(plan, settings, tables)
     end
-    if settings.characterStats then
+    if settings.characterStats or settings.randomStats then
         shuffleCharacterStats(plan, settings, tables)
+    end
+    if settings.gearStats then
+        shuffleGearStats(plan, settings, tables)
+    end
+    if settings.gearPassives then
+        shuffleGearPassives(plan, settings, tables)
+    end
+    if settings.weaknesses then
+        shuffleResistances(plan, settings, tables, "ElementResistanceList", { [ENEMY_CATEGORY] = true, [BOSS_CATEGORY] = true },
+            "weaknesses", "Enemy weaknesses", CHAOS_DATA.elements)
+    end
+    if settings.statusResists then
+        shuffleResistances(plan, settings, tables, "StatusConditionResistanceList", { [ENEMY_CATEGORY] = true },
+            "status resistances", "Status resistances", CHAOS_DATA.statuses)
+    end
+    if settings.enemyPassives then
+        shuffleEnemyPassives(plan, settings, tables)
+    end
+    if settings.swapGear then
+        swapGearTypes(plan, settings, tables)
+    end
+    if settings.encounterRate ~= "normal" then
+        scaleEncounters(plan, settings, tables)
     end
     return plan
 end
@@ -1307,6 +1727,14 @@ local function buildIndex(plan)
 end
 
 local function applyPatch(row, patch)
+    if patch.mapKey ~= nil then
+        local map = row[patch.field]
+        if plainValue(map:Find(patch.mapKey)) == patch.value then
+            return false
+        end
+        map:Add(patch.mapKey, patch.value)
+        return true
+    end
     local target, key = row, patch.field
     if patch.array ~= nil then
         target = row[patch.array]

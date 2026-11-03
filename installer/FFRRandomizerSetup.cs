@@ -189,9 +189,29 @@ namespace FFRRandomizerSetup
             }
         }
 
+        // File.Copy carries a source file's read-only flag over, and Windows won't
+        // overwrite or delete a read-only file even for an administrator, so
+        // files from an earlier install are made writable first.
+        static void MakeWritable(string path)
+        {
+            if (File.Exists(path))
+            {
+                File.SetAttributes(path, FileAttributes.Normal);
+            }
+        }
+
+        static void MakeTreeWritable(string dir)
+        {
+            foreach (string file in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
+        }
+
         static void Extract(string name, string target)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(target));
+            MakeWritable(target);
             using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(PayloadPrefix + name))
             using (FileStream file = File.Create(target))
             {
@@ -226,7 +246,9 @@ namespace FFRRandomizerSetup
             string self = Assembly.GetExecutingAssembly().Location;
             if (!string.Equals(Path.GetFullPath(self), Path.GetFullPath(Uninstaller), StringComparison.OrdinalIgnoreCase))
             {
+                MakeWritable(Uninstaller);
                 File.Copy(self, Uninstaller, true);
+                File.SetAttributes(Uninstaller, FileAttributes.Normal);
             }
 
             Shortcut(StartMenuShortcut);
@@ -236,6 +258,7 @@ namespace FFRRandomizerSetup
             }
             else if (File.Exists(DesktopShortcut))
             {
+                MakeWritable(DesktopShortcut);
                 File.Delete(DesktopShortcut);
             }
 
@@ -288,17 +311,20 @@ namespace FFRRandomizerSetup
                 string modDir = Game.ModDir(gameDir);
                 if (modDir.EndsWith(@"ue4ss\Mods\FFRRandomizer", StringComparison.OrdinalIgnoreCase) && Directory.Exists(modDir))
                 {
+                    MakeTreeWritable(modDir);
                     Directory.Delete(modDir, true);
                 }
             }
             if (File.Exists(AppExe))
             {
+                MakeWritable(AppExe);
                 File.Delete(AppExe);
             }
             foreach (string path in new[] { StartMenuShortcut, DesktopShortcut, Path.Combine(AppConfigDir, "gui.txt") })
             {
                 if (File.Exists(path))
                 {
+                    MakeWritable(path);
                     File.Delete(path);
                 }
             }

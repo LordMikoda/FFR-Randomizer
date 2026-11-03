@@ -3,7 +3,7 @@
 -- applies it in memory. Nothing on disk in the game changes, and removing this
 -- folder undoes everything.
 
-local MOD_VERSION = "0.6.1"
+local MOD_VERSION = "0.7.0"
 local LOG_PREFIX = "[FFRRandomizer] "
 local CHECK_INTERVAL_MS = 3000
 
@@ -14,6 +14,8 @@ end
 local MOD_DIR = debug.getinfo(1, "S").source:match("^@(.*[\\/])Scripts[\\/]main%.lua$")
     or "ue4ss/Mods/FFRRandomizer/"
 local SETTINGS_FILE = MOD_DIR .. "Randomizer.txt"
+-- What happened at the last game start, for the app to show.
+local STATUS_FILE = MOD_DIR .. "Status.txt"
 
 local hasNames, ITEM_NAMES = pcall(require, "ItemNames")
 if not hasNames or type(ITEM_NAMES) ~= "table" then
@@ -290,6 +292,40 @@ local function readSettings()
     return settings
 end
 
+-- Settings code ---------------------------------------------------------------
+-- The seed and every option in one line, such as FFR1-4KQ7M2D-49353958654:
+-- FFR and the format number, the options as bits in 7 Crockford base32
+-- characters, then the seed as typed. Must stay in step with SettingsCode in
+-- the app. Bits 0 to 22 are the switches in CODE_TOGGLES' order, 23 and 24 the
+-- encounter rate, 25 and 26 the chest quantity; 27 to 34 are free.
+
+local CODE_TOGGLES = {
+    "items", "shops", "visions", "enemies", "bosses",
+    "abilities", "mixAbilities", "finishers", "supports",
+    "characterMoves", "characterFinishers", "mixCharacters", "characterStats",
+    "gearStats", "gearPassives", "weaknesses", "statusResists", "enemyPassives",
+    "randomStats", "swapGear", "fullStrength", "shopsAnything", "storyItems",
+}
+local CODE_ENCOUNTERS = { normal = 0, half = 1, double = 2 }
+local CODE_QUANTITIES = { default = 0, ["9"] = 1, ["50"] = 2 }
+local CODE_DIGITS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+local function settingsCode(settings)
+    local bits = 0
+    for i, key in ipairs(CODE_TOGGLES) do
+        if settings[key] then
+            bits = bits | (1 << (i - 1))
+        end
+    end
+    bits = bits | (CODE_ENCOUNTERS[settings.encounterRate] << 23) | (CODE_QUANTITIES[settings.chestQuantity] << 25)
+    local chars = {}
+    for i = 6, 0, -1 do
+        local digit = (bits >> (5 * i)) & 31
+        table.insert(chars, CODE_DIGITS:sub(digit + 1, digit + 1))
+    end
+    return "FFR1-" .. table.concat(chars) .. "-" .. settings.seed
+end
+
 -- Seeded random numbers -----------------------------------------------------
 -- FNV-1a turns the text seed into a number, then SplitMix64 makes the stream.
 -- Lua 5.4 integers wrap at 64 bits, which both rely on.
@@ -420,6 +456,41 @@ local function tableFamily(root)
 end
 
 -- Item catalog --------------------------------------------------------------
+
+-- A unit in a spoiler line. The line holds the row key between \1 marks, so
+-- the seed check never depends on the game's language; writeSpoiler swaps in
+-- the unit's name, read from the row's Name text while the game runs, or
+-- keeps the row key when there is none.
+local unitTable
+local unitLabels = {}
+local unitNamesRead, unitNamesMissing = 0, 0
+
+local function unitLabel(units, rowName, id)
+    unitTable = units
+    return string.format("\1%s\1 (unit %d)", rowName, id)
+end
+
+local function unitDisplayName(rowName)
+    local label = unitLabels[rowName]
+    if label == nil then
+        local text
+        local ok = pcall(function()
+            local name = unitTable:FindRow(rowName).Name
+            if name ~= nil then
+                text = type(name) == "string" and name or name:ToString()
+            end
+        end)
+        if ok and type(text) == "string" and text:match("%S") then
+            unitNamesRead = unitNamesRead + 1
+            label = trim(text)
+        else
+            unitNamesMissing = unitNamesMissing + 1
+            label = rowName
+        end
+        unitLabels[rowName] = label
+    end
+    return label
+end
 
 local function itemName(id)
     return ITEM_NAMES[id] or ("Item " .. tostring(id))
@@ -588,8 +659,8 @@ local function shufflePool(plan, settings, tables, catalog, consumed)
             addSpoiler(plan, "Chests", string.format("%-22s %s x%d   (was %s x%d)", slot.row,
                 itemName(item), count, itemName(slot.original), slot.count))
         elseif item ~= slot.original then
-            addSpoiler(plan, "Drops and steals", string.format("Unit %d %s, %s: %s   (was %s)",
-                slot.unitId, slot.row, slot.field, itemName(item), itemName(slot.original)))
+            addSpoiler(plan, "Drops and steals", string.format("%s, %s: %s   (was %s)",
+                unitLabel(tables.units, slot.row, slot.unitId), slot.field, itemName(item), itemName(slot.original)))
         end
     end
     log(string.format("Item pool: %d slots, %d moved, chest quantity %s.", #slots, moved,
@@ -841,8 +912,9 @@ local function shuffleEnemies(plan, settings, tables)
             moved = moved + 1
             moveSpot(plan, settings, tables, rowOf, id, new)
         end
-        addSpoiler(plan, "Enemies", string.format("Unit %d %s fights in place of unit %d %s (size %s)",
-            new, rowOf[new], id, rowOf[id], UNIT_SIZES[sizeOf[id]] or "Unknown"))
+        addSpoiler(plan, "Enemies", string.format("%s fights in place of %s, size %s",
+            unitLabel(tables.units, rowOf[new], new), unitLabel(tables.units, rowOf[id], id),
+            UNIT_SIZES[sizeOf[id]] or "Unknown"))
     end
     log(string.format("Enemies: %d in random encounters, %d swapped.", #ids, moved))
 end
@@ -926,8 +998,9 @@ local function shuffleBosses(plan, settings, tables)
             moved = moved + 1
             moveSpot(plan, settings, tables, rowOf, id, new)
         end
-        addSpoiler(plan, "Bosses", string.format("Unit %d %s fights in place of unit %d %s (size %s to %s)",
-            new, rowOf[new], id, rowOf[id], UNIT_SIZES[sizeOf[new]] or "Unknown", UNIT_SIZES[sizeOf[id]] or "Unknown"))
+        addSpoiler(plan, "Bosses", string.format("%s fights in place of %s, size %s to %s",
+            unitLabel(tables.units, rowOf[new], new), unitLabel(tables.units, rowOf[id], id),
+            UNIT_SIZES[sizeOf[new]] or "Unknown", UNIT_SIZES[sizeOf[id]] or "Unknown"))
     end
     log(string.format("Bosses: %d in boss fights, %d swapped.", #ids, moved))
 end
@@ -1497,7 +1570,8 @@ local function shuffleResistances(plan, settings, tables, field, categories, str
                     end
                     if moved then
                         changed = changed + 1
-                        addSpoiler(plan, section, string.format("Unit %d %s: %s", row.ID, name, table.concat(parts, ", ")))
+                        addSpoiler(plan, section, string.format("%s: %s", unitLabel(tables.units, name, row.ID),
+                            table.concat(parts, ", ")))
                     end
                 end
             end
@@ -1543,7 +1617,8 @@ local function shuffleEnemyPassives(plan, settings, tables)
     for _, owner in ipairs(order) do
         local unit = byUnit[owner]
         if unit.moved then
-            addSpoiler(plan, "Enemy passives", string.format("Unit %d %s: %s", unit.unit, owner, table.concat(unit.now, ", ")))
+            addSpoiler(plan, "Enemy passives", string.format("%s: %s", unitLabel(tables.units, owner, unit.unit),
+                table.concat(unit.now, ", ")))
         end
     end
     log(string.format("Enemy passives: %d slots, %d changed, %d clashes left.", #slots, changed, clashes))
@@ -1604,6 +1679,37 @@ local function scaleEncounters(plan, settings, tables)
     log(string.format("Encounter rate: %s, %d maps changed.", settings.encounterRate, maps))
 end
 
+local SPOILER_SECTIONS = { "Visions", "Vision abilities", "Finishers", "Characters", "Character stats",
+    "Gear types", "Gear stats", "Gear passives", "Bosses", "Enemies", "Enemy weaknesses", "Status resistances",
+    "Enemy passives", "Encounter rate", "Chests", "Drops and steals", "Shops" }
+
+-- Four words hashed from the settings code and the spoiler's sections (with
+-- unit row keys, not names, so the game's language doesn't change it): two
+-- players with the same seed check have the same shuffle. A mod version or
+-- game patch that moves anything gives a different one.
+local CHECK_WORDS = {
+    "Potion", "Hi-Potion", "X-Potion", "Ether", "Elixir", "Megalixir", "Phoenix Down", "Remedy",
+    "Antidote", "Eye Drops", "Echo Herb", "Gold Needle", "Tent", "Cottage", "Ribbon", "Excalibur",
+    "Masamune", "Mythril", "Adamantite", "Chocobo", "Moogle", "Cactuar", "Tonberry", "Bomb",
+    "Behemoth", "Malboro", "Crystal", "Airship", "Gil", "Summon", "Limit", "Esper",
+}
+
+local function seedCheck(plan, settings)
+    local parts = { settingsCode(settings) }
+    for _, section in ipairs(SPOILER_SECTIONS) do
+        if plan.spoiler[section] ~= nil then
+            table.insert(parts, section)
+            table.insert(parts, table.concat(plan.spoiler[section], "\n"))
+        end
+    end
+    local hash = hashText(table.concat(parts, "\n"))
+    local words = {}
+    for i = 0, 3 do
+        table.insert(words, CHECK_WORDS[((hash >> (5 * i)) & 31) + 1])
+    end
+    return table.concat(words, " / ")
+end
+
 local function writeSpoiler(plan, settings)
     local path = MOD_DIR .. "Spoiler_" .. settings.seed:gsub("[^%w_-]", "_") .. ".txt"
     local file = io.open(path, "w")
@@ -1613,8 +1719,9 @@ local function writeSpoiler(plan, settings)
     end
     local function onOff(value) return value and "on" or "off" end
     file:write("FFR Randomizer " .. MOD_VERSION .. " spoiler log\n")
-    file:write(string.format("Seed: %s\nItems: %s   Shops: %s   Visions: %s   Enemies: %s   Bosses: %s   Chest quantity: %s\n",
-        settings.seed, onOff(settings.items), onOff(settings.shops), onOff(settings.visions),
+    file:write(string.format("Seed: %s\nSettings code: %s\nSeed check: %s\nItems: %s   Shops: %s   Visions: %s   Enemies: %s   Bosses: %s   Chest quantity: %s\n",
+        settings.seed, settingsCode(settings), plan.check, onOff(settings.items), onOff(settings.shops),
+        onOff(settings.visions),
         onOff(settings.enemies), onOff(settings.bosses), settings.chestQuantity))
     file:write(string.format("Vision abilities: %s   Mix Physical and Magic: %s   Finishers: %s   Supports stay supports: %s\n",
         onOff(settings.abilities), onOff(settings.mixAbilities), onOff(settings.finishers), onOff(settings.supports)))
@@ -1631,13 +1738,11 @@ local function writeSpoiler(plan, settings)
         file:write("With enemies or bosses on, drops and steals stay with the spot: a unit's list below\n" ..
             "goes to whichever unit fights in its place.\n")
     end
-    for _, section in ipairs({ "Visions", "Vision abilities", "Finishers", "Characters", "Character stats",
-        "Gear types", "Gear stats", "Gear passives", "Bosses", "Enemies", "Enemy weaknesses", "Status resistances",
-        "Enemy passives", "Encounter rate", "Chests", "Drops and steals", "Shops" }) do
+    for _, section in ipairs(SPOILER_SECTIONS) do
         local lines = plan.spoiler[section]
         if lines ~= nil then
             file:write("\n== " .. section .. " ==\n")
-            file:write(table.concat(lines, "\n"), "\n")
+            file:write((table.concat(lines, "\n"):gsub("\1([^\1]*)\1", unitDisplayName)), "\n")
         end
     end
     file:close()
@@ -1774,12 +1879,38 @@ local settings = readSettings()
 local plan, index
 local waitingFor
 local reportedErrors = {}
+-- What Status.txt reports: waiting, applied or error, the most field changes
+-- one pass applied, how many fields failed, and the last error.
+local status = { state = "waiting", applied = 0, failures = 0, message = "", time = os.date("%Y-%m-%d %H:%M") }
+
+local function writeStatus()
+    local file = io.open(STATUS_FILE, "w")
+    if file == nil then
+        return
+    end
+    local function clean(text) return (tostring(text):gsub("[\r\n]+", " ")) end
+    file:write("# Written by the FFR Randomizer mod at each game start. The app reads it.\n")
+    file:write("version=" .. MOD_VERSION .. "\n")
+    file:write("seed=" .. clean(settings.seed) .. "\n")
+    file:write("code=" .. clean(settingsCode(settings)) .. "\n")
+    file:write("state=" .. status.state .. "\n")
+    file:write("started=" .. status.time .. "\n")
+    file:write("applied_at=" .. (status.appliedAt or "") .. "\n")
+    file:write("planned=" .. (plan and #plan.patches or 0) .. "\n")
+    file:write("changes=" .. status.applied .. "\n")
+    file:write("errors=" .. status.failures .. "\n")
+    file:write("check=" .. (plan and plan.check or "") .. "\n")
+    file:write("message=" .. clean(status.message) .. "\n")
+    file:close()
+end
 
 local function reportOnce(key, message)
     if not reportedErrors[key] then
         reportedErrors[key] = true
         log(message)
+        return true
     end
+    return false
 end
 
 local function applyPlan()
@@ -1794,7 +1925,10 @@ local function applyPlan()
                     local ok, result = pcall(applyPatch, row, patch)
                     if not ok then
                         local where = patch.row .. "." .. tostring(patch.field or patch.array)
-                        reportOnce(patch.family .. where, "Failed on " .. where .. ": " .. tostring(result))
+                        if reportOnce(patch.family .. where, "Failed on " .. where .. ": " .. tostring(result)) then
+                            status.failures = status.failures + 1
+                            status.message = "Failed on " .. where .. ": " .. tostring(result)
+                        end
                     elseif result then
                         changed = changed + 1
                     end
@@ -1819,25 +1953,43 @@ local function tick()
             end
             return
         end
-        log(string.format("Plan ready: %d changes for seed %s.", #plan.patches, settings.seed))
+        plan.check = seedCheck(plan, settings)
+        log(string.format("Plan ready: %d changes for seed %s. Seed check: %s.", #plan.patches, settings.seed, plan.check))
         writeSpoiler(plan, settings)
+        if unitNamesRead + unitNamesMissing > 0 then
+            log(string.format("Unit names: %d read from the game, %d without a name.", unitNamesRead, unitNamesMissing))
+        end
     end
     if index == nil then
         index = buildIndex(plan)
     end
+    local failures = status.failures
     local changed = applyPlan()
     if changed > 0 then
         log(string.format("Applied %d field changes.", changed))
     end
+    -- The first pass reports, and so does any later pass that changed more
+    -- (a rebuilt table) or hit a new failure.
+    if status.state ~= "applied" or changed > status.applied or status.failures ~= failures then
+        status.state = "applied"
+        status.applied = math.max(status.applied, changed)
+        status.appliedAt = os.date("%Y-%m-%d %H:%M")
+        writeStatus()
+    end
 end
 
 log("Version " .. MOD_VERSION .. " loaded. Seed " .. settings.seed .. ". Waiting for game tables.")
+writeStatus()
 
 LoopAsync(CHECK_INTERVAL_MS, function()
     ExecuteInGameThread(function()
         local ok, err = pcall(tick)
         if not ok then
-            reportOnce("tick" .. tostring(err), "Error: " .. tostring(err))
+            if reportOnce("tick" .. tostring(err), "Error: " .. tostring(err)) and status.state ~= "applied" then
+                status.state = "error"
+                status.message = "Error: " .. tostring(err)
+                writeStatus()
+            end
         end
     end)
     return false

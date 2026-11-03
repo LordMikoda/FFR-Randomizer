@@ -16,7 +16,7 @@ using Microsoft.Win32;
 
 [assembly: System.Reflection.AssemblyTitle("FFR Randomizer")]
 [assembly: System.Reflection.AssemblyProduct("FFR Randomizer")]
-[assembly: System.Reflection.AssemblyVersion("0.6.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.7.0.0")]
 
 namespace FFRRandomizerGui
 {
@@ -35,6 +35,11 @@ namespace FFRRandomizerGui
         public static readonly Color GoodBack = ColorTranslator.FromHtml("#17291f");
         public static readonly Color GoodBorder = ColorTranslator.FromHtml("#2d5a3e");
         public static readonly Color Bad = ColorTranslator.FromHtml("#f2a3a3");
+        public static readonly Color BadBack = ColorTranslator.FromHtml("#2a1a1c");
+        public static readonly Color BadBorder = ColorTranslator.FromHtml("#6b3a3e");
+        public static readonly Color Warn = ColorTranslator.FromHtml("#f2c97d");
+        public static readonly Color WarnBack = ColorTranslator.FromHtml("#2a2416");
+        public static readonly Color WarnBorder = ColorTranslator.FromHtml("#6b5a2e");
         public static readonly Color Knob = ColorTranslator.FromHtml("#f4f6f9");
 
         public static Font Ui(float size, FontStyle style)
@@ -46,6 +51,8 @@ namespace FFRRandomizerGui
     // The game, mod and Randomizer File locations, and the file's format.
     static class Game
     {
+        // Kept in step with MOD_VERSION in the mod's main.lua.
+        public const string AppVersion = "0.7.0";
         public const string SteamAppId = "3259780";
         public const string FolderName = "FINAL FANTASY RESONANCE";
         public const string ModPath = @"FFRS\Binaries\Win64\ue4ss\Mods\FFRRandomizer";
@@ -178,15 +185,69 @@ namespace FFRRandomizerGui
             return libraries;
         }
 
+        public static string StatusFile(string gameDir)
+        {
+            return Path.Combine(ModDir(gameDir), "Status.txt");
+        }
+
+        // MOD_VERSION from the installed main.lua, or null when it can't be read.
+        public static string ModVersion(string gameDir)
+        {
+            try
+            {
+                Match match = Regex.Match(File.ReadAllText(Path.Combine(ModDir(gameDir), @"Scripts\main.lua")),
+                    "MOD_VERSION\\s*=\\s*\"([^\"]+)\"");
+                return match.Success ? match.Groups[1].Value : null;
+            }
+            catch (IOException)
+            {
+                return null;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+
+        // -1, 0 or 1 as a is older, the same as or newer than b. Text that
+        // isn't a version counts as the same.
+        public static int CompareVersions(string a, string b)
+        {
+            Version va, vb;
+            if (!Version.TryParse(a, out va) || !Version.TryParse(b, out vb))
+            {
+                return 0;
+            }
+            return va.CompareTo(vb) < 0 ? -1 : va.CompareTo(vb) > 0 ? 1 : 0;
+        }
+
         public static Dictionary<string, string> ReadSettings(string gameDir)
         {
+            return ReadValues(SettingsFile(gameDir));
+        }
+
+        // key=value lines, keys in lower case. Missing or unreadable files give none.
+        public static Dictionary<string, string> ReadValues(string path)
+        {
             Dictionary<string, string> values = new Dictionary<string, string>();
-            string path = SettingsFile(gameDir);
             if (!File.Exists(path))
             {
                 return values;
             }
-            foreach (string line in File.ReadAllLines(path))
+            string[] lines;
+            try
+            {
+                lines = File.ReadAllLines(path, Encoding.UTF8);
+            }
+            catch (IOException)
+            {
+                return values;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return values;
+            }
+            foreach (string line in lines)
             {
                 Match match = Regex.Match(line, @"^\s*([A-Za-z0-9_]+)\s*=(.*)$");
                 if (match.Success)
@@ -206,6 +267,111 @@ namespace FFRRandomizerGui
         public static string OnOff(bool value)
         {
             return value ? "on" : "off";
+        }
+    }
+
+    // The seed and every option in one line, such as FFR1-4KQ7M2D-49353958654:
+    // FFR and the format number, the options as bits in 7 Crockford base32
+    // characters, then the seed as typed. Must stay in step with settingsCode
+    // in the mod's main.lua. Bits 0 to 22 are the switches in the settings
+    // file's order (Game.ToggleKeys, then Game.ChaosKeys), 23 and 24 the
+    // encounter rate, 25 and 26 the chest quantity; 27 to 34 are free.
+    static class SettingsCode
+    {
+        public const int Format = 1;
+        const string Digits = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+        const int ToggleCount = 23;
+
+        public static string Encode(string seed, bool[] toggles, int encounter, int quantity)
+        {
+            long bits = 0;
+            for (int i = 0; i < toggles.Length; i++)
+            {
+                if (toggles[i])
+                {
+                    bits |= 1L << i;
+                }
+            }
+            bits |= (long)encounter << ToggleCount;
+            bits |= (long)quantity << (ToggleCount + 2);
+            StringBuilder text = new StringBuilder("FFR" + Format + "-");
+            for (int i = 6; i >= 0; i--)
+            {
+                text.Append(Digits[(int)((bits >> (5 * i)) & 31)]);
+            }
+            return text.Append('-').Append(seed).ToString();
+        }
+
+        // The code a settings file's values give, read the way the mod reads
+        // them: items, shops and Visions default to on, the rest to off.
+        public static string FromValues(Dictionary<string, string> values)
+        {
+            List<string> keys = new List<string>(Game.ToggleKeys);
+            keys.AddRange(Game.ChaosKeys);
+            bool[] toggles = new bool[keys.Count];
+            for (int i = 0; i < keys.Count; i++)
+            {
+                string value;
+                toggles[i] = values.TryGetValue(keys[i], out value)
+                    ? !(value.ToLowerInvariant() == "off" || value.ToLowerInvariant() == "false" || value == "0")
+                    : i < 3;
+            }
+            string seed, encounter, quantity;
+            values.TryGetValue("seed", out seed);
+            values.TryGetValue("encounter_rate", out encounter);
+            values.TryGetValue("chest_quantity", out quantity);
+            return Encode(seed ?? "", toggles,
+                Math.Max(0, Array.IndexOf(new[] { "normal", "half", "double" }, (encounter ?? "").ToLowerInvariant())),
+                Math.Max(0, Array.IndexOf(new[] { "default", "9", "50" }, (quantity ?? "").ToLowerInvariant())));
+        }
+
+        // Reads a code. On failure, error says why and the outputs are unset.
+        public static bool TryDecode(string code, out string seed, out bool[] toggles, out int encounter,
+            out int quantity, out string error)
+        {
+            seed = null;
+            toggles = null;
+            encounter = quantity = 0;
+            error = null;
+            Match match = Regex.Match(code ?? "", @"^\s*FFR(\d+)-([0-9A-Za-z]{7})-(\S{1,40})\s*$", RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                error = "That isn’t an FFR settings code. Codes look like FFR1-4KQ7M2D-49353958654.";
+                return false;
+            }
+            int format;
+            if (!int.TryParse(match.Groups[1].Value, out format) || format != Format)
+            {
+                error = format > Format
+                    ? "This code is from a newer FFR Randomizer (FFR" + format + "). Update the app to load it."
+                    : "That isn’t an FFR settings code. Codes look like FFR1-4KQ7M2D-49353958654.";
+                return false;
+            }
+            long bits = 0;
+            foreach (char c in match.Groups[2].Value.ToUpperInvariant().Replace('O', '0').Replace('I', '1').Replace('L', '1'))
+            {
+                int digit = Digits.IndexOf(c);
+                if (digit < 0)
+                {
+                    error = "That settings code has a letter codes never use (U). Check it was copied whole.";
+                    return false;
+                }
+                bits = (bits << 5) + digit;
+            }
+            encounter = (int)((bits >> ToggleCount) & 3);
+            quantity = (int)((bits >> (ToggleCount + 2)) & 3);
+            if ((bits >> (ToggleCount + 4)) != 0 || encounter > 2 || quantity > 2)
+            {
+                error = "This code has options this app doesn’t know. Update the app to load it.";
+                return false;
+            }
+            toggles = new bool[ToggleCount];
+            for (int i = 0; i < ToggleCount; i++)
+            {
+                toggles[i] = ((bits >> i) & 1) == 1;
+            }
+            seed = match.Groups[3].Value;
+            return true;
         }
     }
 
@@ -514,7 +680,8 @@ namespace FFRRandomizerGui
         const int Pad = 20;
         const int ContentWidth = 520;
         const int HeaderHeight = 52;
-        const int FooterHeight = 124;
+        // The apply status (or a saved message over it) and the buttons.
+        const int FooterHeight = 160;
         // Space above the game folder and seed, the tab strip under them, and
         // the space above and below a tab's options.
         const int TopGap = 14;
@@ -526,6 +693,8 @@ namespace FFRRandomizerGui
 
         Panel folderSection;
         Panel seedSection;
+        // The settings code, the whole width under the folder and seed.
+        Panel codeSection;
         readonly Panel strip = new Panel();
         // The current tab's options. It scrolls when the window is too short.
         readonly Panel body = new Panel();
@@ -571,8 +740,15 @@ namespace FFRRandomizerGui
         readonly RadioButton[] quantityButtons = new RadioButton[3];
         readonly string[] quantityValues = { "default", "9", "50" };
         readonly Label quantityHelp = new Label();
+        readonly TextBox codeBox = new TextBox();
         readonly Card savedCard = new Card();
         readonly Label savedText = new Label();
+        readonly Card statusCard = new Card();
+        readonly Label statusTitle = new Label();
+        readonly Label statusDetail = new Label();
+        readonly Label statusCheck = new Label();
+        bool loadingState;
+        DateTime statusWritten;
         readonly Button createButton = new Button();
         readonly Random random = new Random();
         string gameDir = "";
@@ -598,14 +774,15 @@ namespace FFRRandomizerGui
 
             folderSection = BuildSection(BuildFolder);
             seedSection = BuildSection(BuildSeed);
+            codeSection = BuildSection(BuildCode);
             BuildTabs();
             int content = 0;
             foreach (OptionTab tab in tabs)
             {
                 content = Math.Max(content, tab.ContentHeight(2));
             }
-            fullHeight = HeaderHeight + 1 + TopGap + Math.Max(folderSection.Height, seedSection.Height) + StripHeight
-                + ContentTop + content + ContentBottom + FooterHeight;
+            fullHeight = HeaderHeight + 1 + TopGap + Math.Max(folderSection.Height, seedSection.Height) + codeSection.Height
+                + StripHeight + ContentTop + content + ContentBottom + FooterHeight;
 
             // Built at the one-column width so every anchor measures from the
             // design layout, then widened to two columns.
@@ -619,6 +796,7 @@ namespace FFRRandomizerGui
             }
             Controls.Add(folderSection);
             Controls.Add(seedSection);
+            Controls.Add(codeSection);
             BuildStrip();
             body.AutoScroll = true;
             body.BackColor = Theme.Ground;
@@ -823,6 +1001,8 @@ namespace FFRRandomizerGui
                 seedSection.SetBounds(0, y, width, seedSection.Height);
                 y += seedSection.Height;
             }
+            codeSection.SetBounds(0, y, width, codeSection.Height);
+            y += codeSection.Height;
             strip.SetBounds(0, y, width, strip.Height);
             LayOutTabButtons(s, pad, width);
             y += strip.Height;
@@ -929,7 +1109,8 @@ namespace FFRRandomizerGui
             {
                 Width = narrow;
             }
-            int shortest = (int)Math.Round((HeaderHeight + TopGap + 104 + StripHeight + 160 + FooterHeight) * s) + frameHeight;
+            int shortest = (int)Math.Round((HeaderHeight + TopGap + 104 + CodeHeight + StripHeight + 160 + FooterHeight) * s)
+                + frameHeight;
             MinimumSize = new Size(narrow, Math.Min(shortest, area.Height));
             MaximumSize = new Size((int)Math.Round(TwoColumnWidth * s * 1.4f) + frameWidth, SystemInformation.MaxWindowTrackSize.Height);
             loaded = true;
@@ -1026,7 +1207,7 @@ namespace FFRRandomizerGui
         void BuildHeader()
         {
             AddLabel("FFR Randomizer", 48, 14, 300, Theme.Ui(12.5f, FontStyle.Bold), Theme.Text);
-            Label version = AddLabel("v0.6.1", 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
+            Label version = AddLabel("v" + Game.AppVersion, 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
             version.TextAlign = ContentAlignment.TopRight;
         }
 
@@ -1056,9 +1237,27 @@ namespace FFRRandomizerGui
             seedBox.TextChanged += delegate { ClearSaved(); };
             Button randomButton = MakeButton("Random", 440, y + 22, 100, 44);
             randomButton.Click += delegate { seedBox.Text = NewSeed(); };
-            AddLabel("Share the seed and settings so others get the same game.", Pad, y + 72, ContentWidth,
+            AddLabel("Share the settings code below so others get the same game.", Pad, y + 72, ContentWidth,
                 Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
             return y + 104;
+        }
+
+        const int CodeHeight = 104;
+
+        // The settings code follows every change; Paste code loads one.
+        int BuildCode(int y)
+        {
+            AddHeading("Settings code", y);
+            AddInput(codeBox, Pad, y + 22, ContentWidth - 88 - 120 - 16, new Font("Consolas", 12f, FontStyle.Regular));
+            codeBox.ReadOnly = true;
+            codeBox.AccessibleName = "Settings code";
+            Button copy = MakeButton("Copy", ContentWidth + Pad - 120 - 8 - 88, y + 22, 88, 44);
+            copy.Click += delegate { CopyCode(); };
+            Button paste = MakeButton("Paste code", ContentWidth + Pad - 120, y + 22, 120, 44);
+            paste.Click += delegate { PasteCode(); };
+            AddLabel("The seed and every option in one line. Paste a friend’s code to load their settings.", Pad, y + 72,
+                ContentWidth, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
+            return y + CodeHeight;
         }
 
         int BuildShuffles(int y)
@@ -1288,20 +1487,38 @@ namespace FFRRandomizerGui
             }
         }
 
+        // The apply status card, with a saved message laid over it while one is
+        // showing, then the buttons.
         void BuildFooter()
         {
+            statusCard.Location = new Point(Pad, fullHeight - 144);
+            statusCard.Size = new Size(ContentWidth, 76);
+            Label[] lines = { statusTitle, statusDetail, statusCheck };
+            for (int i = 0; i < lines.Length; i++)
+            {
+                lines[i].Location = new Point(12, 7 + i * 21);
+                lines[i].Size = new Size(ContentWidth - 24, 20);
+                lines[i].Font = Theme.Ui(i == 0 ? 10f : 9.5f, i == 0 ? FontStyle.Bold : FontStyle.Regular);
+                lines[i].Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+                lines[i].AutoEllipsis = true;
+                statusCard.Controls.Add(lines[i]);
+            }
+            Controls.Add(statusCard);
+
             savedCard.Outline = Theme.GoodBorder;
             savedCard.BackColor = Theme.GoodBack;
-            savedCard.Location = new Point(Pad, fullHeight - 112);
-            savedCard.Size = new Size(ContentWidth, 44);
+            savedCard.Location = new Point(Pad, fullHeight - 144);
+            savedCard.Size = new Size(ContentWidth, 76);
             savedText.Location = new Point(12, 4);
-            savedText.Size = new Size(ContentWidth - 24, 36);
+            savedText.Size = new Size(ContentWidth - 24, 68);
+            savedText.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             savedText.TextAlign = ContentAlignment.MiddleLeft;
             savedText.Font = Theme.Ui(9.5f, FontStyle.Regular);
             savedText.BackColor = Theme.GoodBack;
             savedCard.Controls.Add(savedText);
             savedCard.Visible = false;
             Controls.Add(savedCard);
+            savedCard.BringToFront();
 
             createButton.Text = "Create Randomizer File";
             createButton.Location = new Point(Pad, fullHeight - 60);
@@ -1362,14 +1579,87 @@ namespace FFRRandomizerGui
             return (random.Next(10000, 100000).ToString() + random.Next(100000, 1000000).ToString());
         }
 
+        // Every change to the seed or an option comes through here, so the
+        // settings code follows it.
         void ClearSaved()
         {
             savedCard.Visible = false;
+            UpdateCode();
+        }
+
+        string CurrentCode()
+        {
+            ToggleSwitch[] toggles = SettingToggles();
+            bool[] on = new bool[toggles.Length];
+            for (int i = 0; i < toggles.Length; i++)
+            {
+                on[i] = toggles[i].On;
+            }
+            return SettingsCode.Encode(seedBox.Text.Trim(), on, Picked(encounterButtons), Picked(quantityButtons));
+        }
+
+        void UpdateCode()
+        {
+            if (!loadingState)
+            {
+                codeBox.Text = CurrentCode();
+            }
+        }
+
+        void CopyCode()
+        {
+            try
+            {
+                Clipboard.SetText(codeBox.Text);
+                ShowSaved("Settings code copied. Anyone who pastes it gets this seed and these options.", true);
+            }
+            catch (ExternalException)
+            {
+                ShowSaved("Windows wouldn’t let the app use the clipboard. Try Copy again.", false);
+            }
+        }
+
+        void PasteCode()
+        {
+            string text = "";
+            try
+            {
+                text = Clipboard.ContainsText() ? Clipboard.GetText() : "";
+            }
+            catch (ExternalException)
+            {
+            }
+            string seed, error;
+            bool[] on;
+            int encounter, quantity;
+            if (!SettingsCode.TryDecode(text, out seed, out on, out encounter, out quantity, out error))
+            {
+                ShowSaved(text.Trim() == "" ? "Copy a settings code first, then press Paste code." : error, false);
+                return;
+            }
+            loadingState = true;
+            ToggleSwitch[] toggles = SettingToggles();
+            int count = 0;
+            for (int i = 0; i < toggles.Length; i++)
+            {
+                toggles[i].On = on[i];
+                count += on[i] ? 1 : 0;
+            }
+            encounterButtons[encounter].Checked = true;
+            quantityButtons[quantity].Checked = true;
+            seedBox.Text = seed;
+            loadingState = false;
+            UpdateOptions();
+            UpdateChoices();
+            UpdateCounts();
+            UpdateCode();
+            ShowSaved("Loaded " + codeBox.Text + ": seed and " + count + " options set. Press Create Randomizer File to save it.", true);
         }
 
         void ShowSaved(string message, bool good)
         {
-            savedCard.Outline = good ? Theme.GoodBorder : Theme.Bad;
+            savedCard.Outline = good ? Theme.GoodBorder : Theme.BadBorder;
+            savedCard.BackColor = savedText.BackColor = good ? Theme.GoodBack : Theme.BadBack;
             savedText.ForeColor = good ? ColorTranslator.FromHtml("#bfe9cf") : Theme.Bad;
             savedText.Text = message;
             savedCard.Visible = true;
@@ -1406,8 +1696,178 @@ namespace FFRRandomizerGui
             }
             else
             {
-                folderStatus.Text = "\u2713  UE4SS and the randomizer mod are installed";
-                folderStatus.ForeColor = Theme.Good;
+                string version = Game.ModVersion(gameDir);
+                int compared = Game.CompareVersions(version, Game.AppVersion);
+                if (version == null)
+                {
+                    folderStatus.Text = "\u2713  UE4SS and the randomizer mod are installed";
+                    folderStatus.ForeColor = Theme.Good;
+                }
+                else if (compared < 0)
+                {
+                    folderStatus.Text = "!  Mod " + version + " installed, this app is " + Game.AppVersion + ". Run the " +
+                        Game.AppVersion + " Setup, or some options won\u2019t apply.";
+                    folderStatus.ForeColor = Theme.Warn;
+                }
+                else if (compared > 0)
+                {
+                    folderStatus.Text = "!  Mod " + version + " installed, this app is " + Game.AppVersion +
+                        ". Use the app that came with it.";
+                    folderStatus.ForeColor = Theme.Warn;
+                }
+                else
+                {
+                    folderStatus.Text = "\u2713  UE4SS and randomizer mod " + version + " installed";
+                    folderStatus.ForeColor = Theme.Good;
+                }
+            }
+            folderStatus.AutoEllipsis = true;
+            RefreshStatus();
+        }
+
+        // What the mod's Status.txt says about the last game start, against
+        // the Randomizer File on disk.
+        void RefreshStatus()
+        {
+            if (!ModInstalled)
+            {
+                SetStatus(0, "No status from the game", "Install the mod and pick the game folder to see what the game applied.", null);
+                return;
+            }
+            Dictionary<string, string> status = Game.ReadValues(Game.StatusFile(gameDir));
+            string settingsPath = Game.SettingsFile(gameDir);
+            // A saved message lies over the status card. Once the game writes a
+            // new status, the message has done its job, so the status shows.
+            DateTime written = File.Exists(Game.StatusFile(gameDir)) ? File.GetLastWriteTime(Game.StatusFile(gameDir)) : DateTime.MinValue;
+            if (written != statusWritten)
+            {
+                statusWritten = written;
+                savedCard.Visible = false;
+            }
+            if (status.Count == 0)
+            {
+                if (Game.CompareVersions(Game.ModVersion(gameDir) ?? "0.0.0", "0.7.0") < 0)
+                {
+                    SetStatus(0, "No status from the game", "Mod 0.7.0 or newer reports here after each game start.", null);
+                }
+                else
+                {
+                    SetStatus(0, "Not applied yet", "Start the game to apply the Randomizer File. The seed check appears here once it has.", null);
+                }
+                return;
+            }
+            string state = Value(status, "state"), code = Value(status, "code"), seed = Value(status, "seed");
+            string when = FriendlyTime(Value(status, "applied_at") != "" ? Value(status, "applied_at") : Value(status, "started"));
+            string fileCode = File.Exists(settingsPath) ? SettingsCode.FromValues(Game.ReadSettings(gameDir)) : null;
+            if (fileCode != code)
+            {
+                bool fileNewer = fileCode != null &&
+                    File.GetLastWriteTime(settingsPath) > File.GetLastWriteTime(Game.StatusFile(gameDir));
+                if (fileNewer && !GameRunning())
+                {
+                    SetStatus(0, "Not applied yet", "Start the game to apply this file. Last game start: seed " + seed + ", " + when + ".", null);
+                }
+                else if (fileNewer)
+                {
+                    SetStatus(1, "!  The game is still on the old file",
+                        "It last applied seed " + seed + " " + when + ". Restart the game to use this file.", null);
+                }
+                else
+                {
+                    SetStatus(1, "!  The game read this file differently",
+                        "It applied " + code + " " + when + ". Check the file\u2019s values, or create it again.", null);
+                }
+                return;
+            }
+            int errors, changes;
+            int.TryParse(Value(status, "errors"), out errors);
+            int.TryParse(Value(status, "changes"), out changes);
+            string check = Value(status, "check") == "" ? null : "Seed check   " + Value(status, "check");
+            if (state == "error")
+            {
+                SetStatus(2, "!  Not applied: the mod hit an error", Value(status, "message").TrimEnd('.') + ". Please report it with the UE4SS log.", null);
+            }
+            else if (state != "applied")
+            {
+                SetStatus(0, "Waiting for the game", "The game started " + when + " and hasn\u2019t loaded its tables yet.", null);
+            }
+            else if (errors > 0)
+            {
+                SetStatus(2, "!  Applied with " + errors + (errors == 1 ? " error: " : " errors: ") + when,
+                    changes.ToString("N0") + " changes applied. Some options may not work. The UE4SS log has the Failed on lines.", check);
+            }
+            else
+            {
+                SetStatus(3, "\u2713  Applied in game: " + when + ", mod " + Value(status, "version"),
+                    "This file\u2019s settings. " + changes.ToString("N0") + " changes applied, no errors.", check);
+            }
+        }
+
+        static string Value(Dictionary<string, string> values, string key)
+        {
+            string value;
+            return values.TryGetValue(key, out value) ? value : "";
+        }
+
+        static bool GameRunning()
+        {
+            Process[] found = Process.GetProcessesByName("FFRS-Win64-Shipping");
+            foreach (Process process in found)
+            {
+                process.Dispose();
+            }
+            return found.Length > 0;
+        }
+
+        // "today 3:40 PM", "yesterday 3:40 PM" or "Nov 2, 3:40 PM" from the
+        // mod's local "2026-11-03 15:40".
+        static string FriendlyTime(string text)
+        {
+            DateTime time;
+            if (!DateTime.TryParseExact(text, "yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out time))
+            {
+                return text == "" ? "at an unknown time" : text;
+            }
+            string clock = time.ToString("h:mm tt", System.Globalization.CultureInfo.InvariantCulture);
+            if (time.Date == DateTime.Today)
+            {
+                return "today " + clock;
+            }
+            if (time.Date == DateTime.Today.AddDays(-1))
+            {
+                return "yesterday " + clock;
+            }
+            return time.ToString("MMM d", System.Globalization.CultureInfo.InvariantCulture) + ", " + clock;
+        }
+
+        // kind: 0 neutral, 1 warning, 2 problem, 3 good.
+        void SetStatus(int kind, string title, string detail, string check)
+        {
+            Color[] back = { Theme.Panel, Theme.WarnBack, Theme.BadBack, Theme.GoodBack };
+            Color[] border = { Theme.Border, Theme.WarnBorder, Theme.BadBorder, Theme.GoodBorder };
+            Color[] text = { Theme.Text, Theme.Warn, Theme.Bad, ColorTranslator.FromHtml("#bfe9cf") };
+            statusCard.BackColor = back[kind];
+            statusCard.Outline = border[kind];
+            foreach (Label label in new[] { statusTitle, statusDetail, statusCheck })
+            {
+                label.BackColor = back[kind];
+            }
+            statusTitle.ForeColor = text[kind];
+            statusDetail.ForeColor = kind == 0 ? Theme.Muted : text[kind];
+            statusCheck.ForeColor = Theme.Text;
+            statusTitle.Text = title;
+            statusDetail.Text = detail;
+            statusCheck.Text = check ?? "";
+            statusCard.Invalidate();
+        }
+
+        protected override void OnActivated(EventArgs e)
+        {
+            base.OnActivated(e);
+            if (loaded && gameDir != "")
+            {
+                SetGameDir(gameDir);
             }
         }
 
@@ -1525,6 +1985,7 @@ namespace FFRRandomizerGui
                 values.Add(quantityValues[Picked(quantityButtons)]);
                 Game.WriteSettings(gameDir, values.ToArray());
                 GuiConfig.SaveGameDir(gameDir);
+                RefreshStatus();
                 ShowSaved("Randomizer File saved. Start the game and begin a New Game. Keep this file for the whole playthrough.", true);
             }
             catch (Exception ex)

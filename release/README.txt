@@ -2,9 +2,9 @@ FFR Randomizer
 ==============
 
 Shuffles chests, enemy drops, steals, shop stock, all 26 Visions and their
-abilities, the characters' moves, finishers and stats, the enemies in random
-encounters and the bosses in Final Fantasy Resonance, from a seed you can
-share. Runs in memory through UE4SS: no game files are changed, and removing
+abilities, the characters' moves, finishers and stats, gear stats and
+passives, the enemies in random encounters, their weaknesses and passives,
+and the bosses in Final Fantasy Resonance, from a seed you can share. Runs in memory through UE4SS: no game files are changed, and removing
 the mod undoes it.
 
 Install
@@ -18,7 +18,7 @@ Install
 
 The app sorts its options into three tabs: We Are the Light (the fair
 randomizer), We must BECOME Chaos (wilder, still finishable) and We are
-Chaos (no guard rails). Options marked LATER aren't built yet.
+Chaos (no guard rails, with a warning before the file is made).
 
 Keep the same Randomizer File for the whole playthrough. To change seeds,
 make a new file and restart the game.
@@ -60,12 +60,37 @@ All off by default; turn them on in the app.
   Mind and Agility trade growth curves. Totals, HP and MP stay the same.
 Borrowed moves work, but their animations can look odd on someone else.
 
+Gear and enemies (We must BECOME Chaos)
+---------------------------------------
+- Gear stats: gear of one kind trades stat sets. Prices stay.
+- Gear passives: passives swap among weapons, armor or accessories.
+- Enemy weaknesses: each enemy's element weaknesses and resistances trade
+  places, enemies and bosses alike.
+- Status resistances: regular enemies resist different ailments. Bosses
+  keep theirs.
+- Enemy passives: passives swap among regular enemies. Bosses keep theirs.
+- Encounter rate: Normal, Half or Double.
+
+We are Chaos
+------------
+These can make a run unwinnable. The app asks before it saves a file with
+any of them on.
+- Fully random stats: every stat curve, HP and MP too, comes from any
+  character. No budget.
+- Swap gear types: characters trade weapon and armor types. Starting gear
+  the new types can't use may come off.
+- Enemies at full strength: swapped enemies and bosses keep their own stats
+  but still give the spot's EXP, Gil, drops and steals.
+- Shops sell anything: any item with a price can turn up in any shop.
+- Story items in the shuffle: key and quest items move too. Can softlock
+  the story.
+
 Spoiler log
 -----------
 The game writes Spoiler_<seed>.txt into the FFRRandomizer mod folder the first
 time it starts with a seed. It lists where every item, shop slot and Vision
 went, which enemy and boss replaced which, each Vision's abilities and
-finisher, and each character's moves and stats. Open it from the app with
+finisher, each character's moves and stats, and the gear and enemy changes. Open it from the app with
 Open spoiler log.
 
 Uninstall

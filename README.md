@@ -40,7 +40,7 @@ Copy `mod/FFRRandomizer` into `FINAL FANTASY RESONANCE\FFRS\Binaries\Win64\ue4ss
 
 Build a release:
 ```
-powershell -ExecutionPolicy Bypass -File tools/make_release.ps1 -Version 0.4.0
+powershell -ExecutionPolicy Bypass -File tools/make_release.ps1 -Version 0.4.1
 ```
 
 ## License

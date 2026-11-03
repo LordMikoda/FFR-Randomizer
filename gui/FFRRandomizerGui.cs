@@ -16,7 +16,7 @@ using Microsoft.Win32;
 
 [assembly: System.Reflection.AssemblyTitle("FFR Randomizer")]
 [assembly: System.Reflection.AssemblyProduct("FFR Randomizer")]
-[assembly: System.Reflection.AssemblyVersion("0.4.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.4.1.0")]
 
 namespace FFRRandomizerGui
 {
@@ -678,7 +678,7 @@ namespace FFRRandomizerGui
         void BuildHeader()
         {
             AddLabel("FFR Randomizer", 48, 14, 300, Theme.Ui(12.5f, FontStyle.Bold), Theme.Text);
-            Label version = AddLabel("v0.4.0", 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
+            Label version = AddLabel("v0.4.1", 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
             version.TextAlign = ContentAlignment.TopRight;
         }
 

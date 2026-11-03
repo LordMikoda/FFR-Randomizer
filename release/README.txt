@@ -1,9 +1,9 @@
 FFR Randomizer
 ==============
 
-Shuffles chests, enemy drops, steals, shop stock, all 26 Visions, the
-enemies in random encounters and the bosses in Final Fantasy Resonance, from
-a seed you can share. Runs in memory through UE4SS: no game files are
+Shuffles chests, enemy drops, steals, shop stock, all 26 Visions and their
+abilities, the enemies in random encounters and the bosses in Final Fantasy
+Resonance, from a seed you can share. Runs in memory through UE4SS: no game files are
 changed, and removing the mod undoes it.
 
 Install
@@ -29,11 +29,25 @@ level, HP, stats, EXP, Gil, drops and steals of the one it replaced, so every
 fight plays and pays as before. Lose-on-purpose and multi-phase boss fights
 are not changed.
 
+Vision abilities
+----------------
+All off by default; turn them on in the app.
+- Abilities: each Vision's abilities and passives swap with other Visions'.
+  A Vision keeps its number of each and the level it learns them at, never
+  gets the same ability twice, and never gets two versions of one stat
+  bonus, such as Speed +10% and Speed +20%.
+- Mix Physical and Magic: off keeps Physical and Magic Visions in separate
+  pools; on puts all 26 together.
+- Supports stay supports: Leah, Ayaka and Y'shtola keep at least 5 healing
+  abilities.
+- Finishers: the 26 finishers trade places. Works without Abilities.
+
 Spoiler log
 -----------
 The game writes Spoiler_<seed>.txt into the FFRRandomizer mod folder the first
 time it starts with a seed. It lists where every item, shop slot and Vision
-went, and which enemy and boss replaced which. Open it from the app with Open
+went, which enemy and boss replaced which, and each Vision's abilities and
+finisher. Open it from the app with Open
 spoiler log.
 
 Uninstall

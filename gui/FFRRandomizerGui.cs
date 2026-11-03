@@ -16,7 +16,7 @@ using Microsoft.Win32;
 
 [assembly: System.Reflection.AssemblyTitle("FFR Randomizer")]
 [assembly: System.Reflection.AssemblyProduct("FFR Randomizer")]
-[assembly: System.Reflection.AssemblyVersion("0.3.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.4.0.0")]
 
 namespace FFRRandomizerGui
 {
@@ -62,8 +62,13 @@ namespace FFRRandomizerGui
             "visions={3}\n" +
             "enemies={4}\n" +
             "bosses={5}\n" +
+            "# Vision abilities. mix_physical_magic and supports only matter with abilities on.\n" +
+            "abilities={6}\n" +
+            "mix_physical_magic={7}\n" +
+            "finishers={8}\n" +
+            "supports={9}\n" +
             "# default, 9 or 50. Weapons, armor and accessories always stay at 1.\n" +
-            "chest_quantity={6}\n";
+            "chest_quantity={10}\n";
 
         public static string ModDir(string gameDir)
         {
@@ -164,9 +169,11 @@ namespace FFRRandomizerGui
             return values;
         }
 
-        public static void WriteSettings(string gameDir, string seed, bool items, bool shops, bool visions, bool enemies, bool bosses, string quantity)
+        public static void WriteSettings(string gameDir, string seed, bool items, bool shops, bool visions, bool enemies, bool bosses,
+            bool abilities, bool mixAbilities, bool finishers, bool supports, string quantity)
         {
-            string text = string.Format(Template, seed, OnOff(items), OnOff(shops), OnOff(visions), OnOff(enemies), OnOff(bosses), quantity);
+            string text = string.Format(Template, seed, OnOff(items), OnOff(shops), OnOff(visions), OnOff(enemies), OnOff(bosses),
+                OnOff(abilities), OnOff(mixAbilities), OnOff(finishers), OnOff(supports), quantity);
             File.WriteAllText(SettingsFile(gameDir), text, new UTF8Encoding(false));
         }
 
@@ -278,7 +285,7 @@ namespace FFRRandomizerGui
             g.Clear(Parent != null ? Parent.BackColor : Theme.Panel);
             Rectangle track = new Rectangle(1, 1, Width - 3, Height - 3);
             using (GraphicsPath path = Shapes.Rounded(track, track.Height / 2))
-            using (Brush brush = new SolidBrush(isOn ? Theme.Accent : Theme.ButtonBorder))
+            using (Brush brush = new SolidBrush(!Enabled ? Theme.Border : isOn ? Theme.Accent : Theme.ButtonBorder))
             {
                 g.FillPath(brush, path);
                 if (Focused)
@@ -291,11 +298,13 @@ namespace FFRRandomizerGui
             }
             int knob = track.Height - 6;
             int x = isOn ? track.Right - knob - 3 : track.Left + 3;
-            using (Brush brush = new SolidBrush(Theme.Knob))
+            using (Brush brush = new SolidBrush(Enabled ? Theme.Knob : Theme.Muted))
             {
                 g.FillEllipse(brush, x, track.Top + 3, knob, knob);
             }
         }
+
+        protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
     }
 
     // A bordered, rounded panel, used for the input boxes and the shuffle list.
@@ -347,7 +356,7 @@ namespace FFRRandomizerGui
     {
         const int Pad = 20;
         const int ContentWidth = 520;
-        const int FullHeight = 936;
+        const int FullHeight = 1234;
         const int HeaderHeight = 52;
         const int FooterHeight = 124;
 
@@ -363,6 +372,10 @@ namespace FFRRandomizerGui
         readonly ToggleSwitch visionsToggle = new ToggleSwitch();
         readonly ToggleSwitch enemiesToggle = new ToggleSwitch();
         readonly ToggleSwitch bossesToggle = new ToggleSwitch();
+        readonly ToggleSwitch abilitiesToggle = new ToggleSwitch();
+        readonly ToggleSwitch mixToggle = new ToggleSwitch();
+        readonly ToggleSwitch supportsToggle = new ToggleSwitch();
+        readonly ToggleSwitch finishersToggle = new ToggleSwitch();
         readonly RadioButton[] quantityButtons = new RadioButton[3];
         readonly string[] quantityValues = { "default", "9", "50" };
         readonly Label quantityHelp = new Label();
@@ -397,6 +410,7 @@ namespace FFRRandomizerGui
             y = BuildFolder(y);
             y = BuildSeed(y);
             y = BuildShuffles(y);
+            y = BuildAbilities(y);
             y = BuildQuantity(y);
             BuildComingLater(y);
             BuildFooter();
@@ -532,7 +546,7 @@ namespace FFRRandomizerGui
         void BuildHeader()
         {
             AddLabel("FFR Randomizer", 48, 14, 300, Theme.Ui(12.5f, FontStyle.Bold), Theme.Text);
-            Label version = AddLabel("v0.3.0", 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
+            Label version = AddLabel("v0.4.0", 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
             version.TextAlign = ContentAlignment.TopRight;
         }
 
@@ -569,29 +583,55 @@ namespace FFRRandomizerGui
 
         int BuildShuffles(int y)
         {
-            AddHeading("Shuffles", y);
-            Card card = new Card();
-            card.Radius = 10;
-            card.Location = new Point(Pad, y + 22);
-            card.Size = new Size(ContentWidth, 5 * 64);
-            Controls.Add(card);
+            Card card = AddToggleCard("Shuffles", y, 5);
             AddShuffleRow(card, 0, "Items", "Chests, enemy drops and steals. Key items stay put.", itemsToggle);
             AddShuffleRow(card, 1, "Shops", "Same categories and game prices, new stock.", shopsToggle);
             AddShuffleRow(card, 2, "Visions", "All 26 Vision rewards trade places.", visionsToggle);
             AddShuffleRow(card, 3, "Enemies", "Random encounters swap. Each spot keeps its stats and rewards.", enemiesToggle);
             AddShuffleRow(card, 4, "Bosses", "Boss fights swap. Each fight keeps its stats and rewards.", bossesToggle);
+            return y + 22 + 5 * 64 + 20;
+        }
+
+        // Mixing and supports only apply to the ability shuffle, so they grey
+        // out while it's off. Finishers shuffle on their own.
+        int BuildAbilities(int y)
+        {
+            Card card = AddToggleCard("Vision abilities", y, 4);
+            AddShuffleRow(card, 0, "Abilities", "Abilities and passives swap. Each Vision keeps its counts.", abilitiesToggle);
+            AddShuffleRow(card, 1, "Mix Physical and Magic", "Physical and Magic Visions share one ability pool.", mixToggle);
+            AddShuffleRow(card, 2, "Supports stay supports", "Leah, Ayaka and Y\u2019shtola keep 5 or more healing abilities.", supportsToggle);
+            AddShuffleRow(card, 3, "Finishers", "The 26 finishers trade places.", finishersToggle);
+            abilitiesToggle.Changed += delegate { UpdateAbilityOptions(); };
+            return y + 22 + 4 * 64 + 20;
+        }
+
+        void UpdateAbilityOptions()
+        {
+            mixToggle.Enabled = abilitiesToggle.On;
+            supportsToggle.Enabled = abilitiesToggle.On;
+        }
+
+        // A rounded card of 64 px rows with lines between them, under a heading.
+        Card AddToggleCard(string heading, int y, int rows)
+        {
+            AddHeading(heading, y);
+            Card card = new Card();
+            card.Radius = 10;
+            card.Location = new Point(Pad, y + 22);
+            card.Size = new Size(ContentWidth, rows * 64);
+            Controls.Add(card);
             card.Paint += delegate(object sender, PaintEventArgs e)
             {
                 using (Pen pen = new Pen(Theme.Border))
                 {
                     float s = DeviceDpi / 96f;
-                    for (int row = 1; row < 5; row++)
+                    for (int row = 1; row < rows; row++)
                     {
                         e.Graphics.DrawLine(pen, 0, row * 64 * s, card.Width - 1, row * 64 * s);
                     }
                 }
             };
-            return y + 22 + 5 * 64 + 20;
+            return card;
         }
 
         void AddShuffleRow(Card card, int index, string title, string detail, ToggleSwitch toggle)
@@ -665,7 +705,7 @@ namespace FFRRandomizerGui
         {
             savedCard.Outline = Theme.GoodBorder;
             savedCard.BackColor = Theme.GoodBack;
-            savedCard.Location = new Point(Pad, 824);
+            savedCard.Location = new Point(Pad, FullHeight - 112);
             savedCard.Size = new Size(ContentWidth, 44);
             savedText.Location = new Point(12, 4);
             savedText.Size = new Size(ContentWidth - 24, 36);
@@ -677,7 +717,7 @@ namespace FFRRandomizerGui
             Controls.Add(savedCard);
 
             createButton.Text = "Create Randomizer File";
-            createButton.Location = new Point(Pad, 876);
+            createButton.Location = new Point(Pad, FullHeight - 60);
             createButton.Size = new Size(358, 48);
             createButton.FlatStyle = FlatStyle.Flat;
             createButton.FlatAppearance.BorderSize = 0;
@@ -690,7 +730,7 @@ namespace FFRRandomizerGui
             Controls.Add(createButton);
             AcceptButton = createButton;
 
-            Button spoiler = MakeButton("Open spoiler log", 388, 876, 152, 48);
+            Button spoiler = MakeButton("Open spoiler log", 388, FullHeight - 60, 152, 48);
             spoiler.BackColor = Theme.Ground;
             spoiler.Click += delegate { OpenSpoiler(); };
         }
@@ -782,6 +822,11 @@ namespace FFRRandomizerGui
             visionsToggle.On = Flag(values, "visions", true);
             enemiesToggle.On = Flag(values, "enemies", false);
             bossesToggle.On = Flag(values, "bosses", false);
+            abilitiesToggle.On = Flag(values, "abilities", false);
+            mixToggle.On = Flag(values, "mix_physical_magic", false);
+            supportsToggle.On = Flag(values, "supports", false);
+            finishersToggle.On = Flag(values, "finishers", false);
+            UpdateAbilityOptions();
             string quantity;
             int index = values.TryGetValue("chest_quantity", out quantity) ? Array.IndexOf(quantityValues, quantity.ToLowerInvariant()) : 0;
             quantityButtons[index < 0 ? 0 : index].Checked = true;
@@ -845,7 +890,8 @@ namespace FFRRandomizerGui
             }
             try
             {
-                Game.WriteSettings(gameDir, seed, itemsToggle.On, shopsToggle.On, visionsToggle.On, enemiesToggle.On, bossesToggle.On, SelectedQuantity());
+                Game.WriteSettings(gameDir, seed, itemsToggle.On, shopsToggle.On, visionsToggle.On, enemiesToggle.On, bossesToggle.On,
+                    abilitiesToggle.On, mixToggle.On, finishersToggle.On, supportsToggle.On, SelectedQuantity());
                 GuiConfig.SaveGameDir(gameDir);
                 ShowSaved("Randomizer File saved. Start the game and begin a New Game. Keep this file for the whole playthrough.", true);
             }

@@ -186,7 +186,7 @@ function Banner($w, $h, $orbit, $tx, $ty, $k, $file) {
     $g.DrawString("for Final Fantasy Resonance", $sub, $mutedBrush, ($tx + 8 * $k), ($ty + 150 * $k))
     $g.FillRectangle($accentBrush, ($tx + 12 * $k), ($ty + 260 * $k), (120 * $k), [Math]::Max(3, 6 * $k))
     # The feature lines shrink together if the longer one would run off the edge.
-    $features = ("Chests", "Drops", "Steals", "Shops", "Visions", "Enemies", "Bosses") -join $dot
+    $features = ("Chests", "Drops", "Steals", "Shops", "Visions", "Abilities", "Enemies", "Bosses") -join $dot
     $room = $w - ($tx + 8 * $k) - 40 * $k
     $wide = $g.MeasureString($features, $small).Width
     if ($wide -gt $room) {

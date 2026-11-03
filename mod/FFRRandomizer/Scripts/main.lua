@@ -3,7 +3,7 @@
 -- applies it in memory. Nothing on disk in the game changes, and removing this
 -- folder undoes everything.
 
-local MOD_VERSION = "0.3.0"
+local MOD_VERSION = "0.4.0"
 local LOG_PREFIX = "[FFRRandomizer] "
 local CHECK_INTERVAL_MS = 3000
 
@@ -25,6 +25,11 @@ if not hasGroups or type(ENCOUNTER_GROUPS) ~= "table" then
     ENCOUNTER_GROUPS = nil
 end
 
+local hasAbilities, VISION_ABILITIES = pcall(require, "VisionAbilities")
+if not hasAbilities or type(VISION_ABILITIES) ~= "table" then
+    VISION_ABILITIES = nil
+end
+
 local TABLES = {
     chests = "/Game/Datatable/Map/Gimmick/TreasureBox/CDT_MapGimmickTreasureBox.CDT_MapGimmickTreasureBox",
     units = "/Game/Datatable/Unit/DT_UnitParameter.DT_UnitParameter",
@@ -33,10 +38,17 @@ local TABLES = {
     questBoard = "/Game/Datatable/Quest/CDT_QuestBoardData.CDT_QuestBoardData",
     battleGroups = "/Game/Datatable/Encount/DT_BattleGroup.DT_BattleGroup",
     unitDesign = "/Game/Datatable/Battle/Unit/DT_BtlUnitDesignParameter.DT_BtlUnitDesignParameter",
+    visionItems = "/Game/Datatable/Item/Vision/DT_VisionItemData.DT_VisionItemData",
+    awakening = "/Game/Datatable/Item/Vision/DT_VisionAwakeningMasteryData.DT_VisionAwakeningMasteryData",
+    synchro = "/Game/Datatable/Item/Vision/DT_VisionSynchroMasteryData.DT_VisionSynchroMasteryData",
+    skills = "/Game/Datatable/Skill/DT_SkillData.DT_SkillData",
+    passives = "/Game/Datatable/Skill/DT_PassiveSkillData.DT_PassiveSkillData",
 }
--- Tables the plan can do without, and the ones only the enemy and boss shuffles need.
+-- Tables the plan can do without, the ones only the enemy and boss shuffles
+-- need, and the ones only the Vision ability shuffle needs.
 local OPTIONAL_TABLES = { questBoard = true }
 local ENEMY_TABLES = { battleGroups = true, unitDesign = true }
+local ABILITY_TABLES = { awakening = true, synchro = true, skills = true, passives = true }
 
 -- Only Consumable, Equipment and Seed items move. Valuables, Artifacts and
 -- Visions are key items or have their own rules, so they never leave their spot.
@@ -85,6 +97,24 @@ end
 local UNIT_SIZES = { [1] = "S", [2] = "M", [3] = "L", [4] = "LL", [5] = "XL" }
 
 local VISION_COUNT = 26
+
+-- Leah, Ayaka and Y'shtola. With supports on, each keeps at least
+-- SUPPORT_MIN_HEALING abilities from HEALING_SKILLS.
+local SUPPORT_VISIONS = { [13045] = true, [13051] = true, [13127] = true }
+local SUPPORT_MIN_HEALING = 5
+-- Abilities that heal, revive or cure allies. The skill table can't tell
+-- these apart from buffs, so the list is by hand.
+local HEALING_SKILLS = {
+    [210010] = true, [210020] = true, [210030] = true, -- Cure, Cura, Curaga
+    [210050] = true, [414510] = true,                  -- Regen, Hi Regen
+    [210120] = true, [210130] = true,                  -- Esuna, Esunaga
+    [210140] = true, [210150] = true, [210160] = true, -- Raise, Arise, Reraise
+    [220410] = true,                                   -- Manaward
+    [220480] = true, [220490] = true, [220500] = true, -- Cure I, II and III of the Seventh Dawn
+    [400540] = true, [400550] = true,                  -- Recover, First Aid
+    [400740] = true, [414500] = true,                  -- Prepare Healing, Purify
+}
+
 local CHEST_CAPS = { default = false, ["9"] = 9, ["50"] = 50 }
 
 -- Settings ------------------------------------------------------------------
@@ -99,6 +129,11 @@ shops=%s
 visions=%s
 enemies=%s
 bosses=%s
+# Vision abilities. mix_physical_magic and supports only matter with abilities on.
+abilities=%s
+mix_physical_magic=%s
+finishers=%s
+supports=%s
 # default, 9 or 50. Weapons, armor and accessories always stay at 1.
 chest_quantity=%s
 ]]
@@ -116,7 +151,8 @@ local function writeSettings(settings)
     local function onOff(value) return value and "on" or "off" end
     file:write(string.format(SETTINGS_TEMPLATE, settings.seed, onOff(settings.items),
         onOff(settings.shops), onOff(settings.visions), onOff(settings.enemies), onOff(settings.bosses),
-        settings.chestQuantity))
+        onOff(settings.abilities), onOff(settings.mixAbilities), onOff(settings.finishers),
+        onOff(settings.supports), settings.chestQuantity))
     file:close()
 end
 
@@ -138,7 +174,7 @@ local function readSettings()
         return value ~= "off" and value ~= "false" and value ~= "0"
     end
 
-    -- enemies and bosses came later than the others, so a file without the line keeps them off.
+    -- Everything after visions came later, so a file without the line keeps it off.
     local settings = {
         seed = values.seed or "",
         items = flag("items", "on"),
@@ -146,6 +182,10 @@ local function readSettings()
         visions = flag("visions", "on"),
         enemies = flag("enemies", "off"),
         bosses = flag("bosses", "off"),
+        abilities = flag("abilities", "off"),
+        mixAbilities = flag("mix_physical_magic", "off"),
+        finishers = flag("finishers", "off"),
+        supports = flag("supports", "off"),
         chestQuantity = (values.chest_quantity or "default"):lower(),
     }
     if CHEST_CAPS[settings.chestQuantity] == nil then
@@ -323,21 +363,22 @@ end
 
 -- Plan ----------------------------------------------------------------------
 -- A patch sets one field: row[field], row[array][index][field], or, with no
--- field, the plain value row[array][index]. A later patch to the same spot
--- replaces the earlier one, so two passes never fight over a field.
+-- field, the plain value row[array][index]. With sub as well, it sets
+-- row[array][index][field][sub]. A later patch to the same spot replaces the
+-- earlier one, so two passes never fight over a field.
 
 local function newPlan()
     return { patches = {}, patchIndex = {}, spoiler = {}, unitItems = {} }
 end
 
-local function addPatch(plan, family, row, field, value, array, index)
-    local key = table.concat({ family, row, tostring(array), tostring(index), tostring(field) }, "|")
+local function addPatch(plan, family, row, field, value, array, index, sub)
+    local key = table.concat({ family, row, tostring(array), tostring(index), tostring(field), tostring(sub) }, "|")
     local existing = plan.patchIndex[key]
     if existing ~= nil then
         existing.value = value
         return
     end
-    local patch = { family = family, row = row, field = field, value = value, array = array, index = index }
+    local patch = { family = family, row = row, field = field, value = value, array = array, index = index, sub = sub }
     plan.patchIndex[key] = patch
     table.insert(plan.patches, patch)
 end
@@ -749,6 +790,246 @@ local function shuffleBosses(plan, settings, tables)
     log(string.format("Bosses: %d in boss fights, %d swapped.", #ids, moved))
 end
 
+-- Vision abilities ----------------------------------------------------------
+
+local function abilityName(id)
+    local names = VISION_ABILITIES and VISION_ABILITIES.names or {}
+    return names[id] or ("Ability " .. tostring(id))
+end
+
+local function idSet(dataTable)
+    local ids = {}
+    dataTable:ForEachRow(function(_, row)
+        ids[row.ID] = true
+    end)
+    return ids
+end
+
+-- The ActiveSkill and PassiveSkill slots of every awakening and synchro row.
+-- parameterType reads as a bare number, so a slot's kind comes from the skill
+-- table its ID is in, and a type number counts only when all of its slots
+-- agree. BaseParameter and MasterSkill slots never qualify and stay put.
+local function readAbilitySlots(tables)
+    local skills, passives = idSet(tables.skills), idSet(tables.passives)
+    local found, kindsOfType = {}, {}
+    for _, family in ipairs({ "awakening", "synchro" }) do
+        for _, name in ipairs(sortedRowNames(tables[family])) do
+            local row = tables[family]:FindRow(name)
+            for i, entry in ipairs(arrayItems(row.detailData)) do
+                local id = arrayItems(entry.params)[1]
+                local kind = (skills[id] and "active") or (passives[id] and "passive") or "other"
+                local kinds = kindsOfType[entry.parameterType] or {}
+                kindsOfType[entry.parameterType] = kinds
+                kinds[kind] = true
+                table.insert(found, { family = family, row = name, index = i, vision = row.ID,
+                    type = entry.parameterType, kind = kind, original = id, value = id })
+            end
+        end
+    end
+    local slots = {}
+    for _, slot in ipairs(found) do
+        local kinds = kindsOfType[slot.type]
+        if slot.kind ~= "other" and not kinds.other and not (kinds.active and kinds.passive) then
+            table.insert(slots, slot)
+        end
+    end
+    return slots
+end
+
+-- Two slots clash when they hold the same ability, or two passives from one
+-- stat family such as Speed +10% and Speed +20%.
+local function abilityKey(slot, id)
+    if slot.kind == "passive" then
+        return "p" .. (VISION_ABILITIES.families[id] or tostring(id))
+    end
+    return "a" .. tostring(id)
+end
+
+local function holdAbility(held, slot, change)
+    local key = abilityKey(slot, slot.value)
+    held[slot.vision][key] = (held[slot.vision][key] or 0) + change
+end
+
+-- Whether swapping a's and b's abilities leaves neither Vision with a clash.
+local function canSwap(held, a, b)
+    if a.vision == b.vision then
+        return false
+    end
+    local keyA, keyB = abilityKey(a, a.value), abilityKey(b, b.value)
+    return keyA ~= keyB and (held[a.vision][keyB] or 0) == 0 and (held[b.vision][keyA] or 0) == 0
+end
+
+local function swapAbilities(held, a, b)
+    holdAbility(held, a, -1)
+    holdAbility(held, b, -1)
+    a.value, b.value = b.value, a.value
+    holdAbility(held, a, 1)
+    holdAbility(held, b, 1)
+end
+
+-- The first slot in the pool, from a random start, that b can swap with.
+local function findSwap(pool, rng, test)
+    local start = rng.int(#pool)
+    for step = 0, #pool - 1 do
+        local slot = pool[(start + step - 1) % #pool + 1]
+        if test(slot) then
+            return slot
+        end
+    end
+    return nil
+end
+
+local function healingCount(pool, vision)
+    local count = 0
+    for _, slot in ipairs(pool) do
+        if slot.vision == vision and HEALING_SKILLS[slot.value] then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+-- Abilities swap between slots of the same kind, so each Vision keeps its
+-- number of actives and passives and when it learns them. Physical and Magic
+-- Visions shuffle apart unless mixing is on. A repair pass then clears any
+-- Vision holding one ability twice, or two passives from one stat family.
+-- The same ability on two different Visions is fine, as in the base game.
+local function shuffleVisionAbilities(plan, settings, tables)
+    if VISION_ABILITIES == nil then
+        log("VisionAbilities.lua is missing. Vision abilities not shuffled.")
+        return
+    end
+    local slots = readAbilitySlots(tables)
+
+    local pools, poolNames, held = {}, {}, {}
+    for _, slot in ipairs(slots) do
+        local group = settings.mixAbilities and "All"
+            or (VISION_ABILITIES.physical[slot.vision] and "Physical" or "Magic")
+        local name = group .. " " .. slot.kind
+        if pools[name] == nil then
+            pools[name] = {}
+            table.insert(poolNames, name)
+        end
+        table.insert(pools[name], slot)
+        held[slot.vision] = held[slot.vision] or {}
+    end
+    table.sort(poolNames)
+
+    local rng = newRng(settings.seed, "abilities")
+    for _, name in ipairs(poolNames) do
+        local pool = pools[name]
+        local values = {}
+        for i, slot in ipairs(pool) do
+            values[i] = slot.original
+        end
+        rng.shuffle(values)
+        for i, slot in ipairs(pool) do
+            slot.value = values[i]
+        end
+    end
+    for _, slot in ipairs(slots) do
+        holdAbility(held, slot, 1)
+    end
+
+    local clashes = 0
+    for _, name in ipairs(poolNames) do
+        local pool = pools[name]
+        for _, slot in ipairs(pool) do
+            while held[slot.vision][abilityKey(slot, slot.value)] > 1 do
+                local other = findSwap(pool, rng, function(other) return canSwap(held, slot, other) end)
+                if other == nil then
+                    clashes = clashes + 1
+                    break
+                end
+                swapAbilities(held, slot, other)
+            end
+        end
+    end
+
+    -- Supports take healing from other Visions in their own pool, never from
+    -- another support, giving back one of their other abilities in exchange.
+    if settings.supports then
+        local supports = {}
+        for vision in pairs(SUPPORT_VISIONS) do
+            if held[vision] ~= nil then
+                table.insert(supports, vision)
+            end
+        end
+        table.sort(supports)
+        for _, vision in ipairs(supports) do
+            local group = settings.mixAbilities and "All"
+                or (VISION_ABILITIES.physical[vision] and "Physical" or "Magic")
+            local pool = pools[group .. " active"] or {}
+            while healingCount(pool, vision) < SUPPORT_MIN_HEALING do
+                local given, taken
+                for _, slot in ipairs(pool) do
+                    if slot.vision == vision and not HEALING_SKILLS[slot.value] then
+                        taken = findSwap(pool, rng, function(other)
+                            return HEALING_SKILLS[other.value] and not SUPPORT_VISIONS[other.vision]
+                                and canSwap(held, slot, other)
+                        end)
+                        if taken ~= nil then
+                            given = slot
+                            break
+                        end
+                    end
+                end
+                if given == nil then
+                    log(string.format("Only %d healing abilities for %s.", healingCount(pool, vision),
+                        itemName(vision)))
+                    break
+                end
+                swapAbilities(held, given, taken)
+            end
+        end
+    end
+
+    local changed = 0
+    local byVision, visions = {}, {}
+    for _, slot in ipairs(slots) do
+        if slot.value ~= slot.original then
+            changed = changed + 1
+            addPatch(plan, slot.family, slot.row, "params", slot.value, "detailData", slot.index, 1)
+        end
+        if byVision[slot.vision] == nil then
+            byVision[slot.vision] = { active = {}, passive = {} }
+            table.insert(visions, slot.vision)
+        end
+        table.insert(byVision[slot.vision][slot.kind], abilityName(slot.value))
+    end
+    table.sort(visions, function(a, b) return itemName(a) < itemName(b) end)
+    for _, vision in ipairs(visions) do
+        addSpoiler(plan, "Vision abilities", string.format("%s\n  Abilities: %s\n  Passives: %s", itemName(vision),
+            table.concat(byVision[vision].active, ", "), table.concat(byVision[vision].passive, ", ")))
+    end
+    log(string.format("Vision abilities: %d slots, %d changed, %s, %d clashes left.", #slots, changed,
+        settings.mixAbilities and "Physical and Magic mixed" or "Physical and Magic apart", clashes))
+end
+
+-- The 26 finishers trade places among the Visions.
+local function shuffleFinishers(plan, settings, tables)
+    local slots = {}
+    for _, name in ipairs(sortedRowNames(tables.visionItems)) do
+        local row = tables.visionItems:FindRow(name)
+        if row.finishBlowSkill > 0 then
+            table.insert(slots, { row = name, vision = row.ID, original = row.finishBlowSkill })
+        end
+    end
+    local values = {}
+    for i, slot in ipairs(slots) do
+        values[i] = slot.original
+    end
+    newRng(settings.seed, "finishers").shuffle(values)
+    for i, slot in ipairs(slots) do
+        if values[i] ~= slot.original then
+            addPatch(plan, "visionItems", slot.row, "finishBlowSkill", values[i])
+        end
+        addSpoiler(plan, "Finishers", string.format("%-18s %s   (was %s)", itemName(slot.vision),
+            abilityName(values[i]), abilityName(slot.original)))
+    end
+    log(string.format("Finishers: %d shuffled.", #slots))
+end
+
 local function writeSpoiler(plan, settings)
     local path = MOD_DIR .. "Spoiler_" .. settings.seed:gsub("[^%w_-]", "_") .. ".txt"
     local file = io.open(path, "w")
@@ -761,11 +1042,14 @@ local function writeSpoiler(plan, settings)
     file:write(string.format("Seed: %s\nItems: %s   Shops: %s   Visions: %s   Enemies: %s   Bosses: %s   Chest quantity: %s\n",
         settings.seed, onOff(settings.items), onOff(settings.shops), onOff(settings.visions),
         onOff(settings.enemies), onOff(settings.bosses), settings.chestQuantity))
+    file:write(string.format("Vision abilities: %s   Mix Physical and Magic: %s   Finishers: %s   Supports stay supports: %s\n",
+        onOff(settings.abilities), onOff(settings.mixAbilities), onOff(settings.finishers), onOff(settings.supports)))
     if settings.enemies or settings.bosses then
         file:write("With enemies or bosses on, drops and steals stay with the spot: a unit's list below\n" ..
             "goes to whichever unit fights in its place.\n")
     end
-    for _, section in ipairs({ "Visions", "Bosses", "Enemies", "Chests", "Drops and steals", "Shops" }) do
+    for _, section in ipairs({ "Visions", "Vision abilities", "Finishers", "Bosses", "Enemies", "Chests",
+        "Drops and steals", "Shops" }) do
         local lines = plan.spoiler[section]
         if lines ~= nil then
             file:write("\n== " .. section .. " ==\n")
@@ -780,7 +1064,9 @@ local function buildPlan(settings)
     local tables = {}
     for key, path in pairs(TABLES) do
         tables[key] = findTable(path)
-        local needed = not OPTIONAL_TABLES[key] and (settings.enemies or settings.bosses or not ENEMY_TABLES[key])
+        local needed = not OPTIONAL_TABLES[key]
+            and (settings.enemies or settings.bosses or not ENEMY_TABLES[key])
+            and (settings.abilities or not ABILITY_TABLES[key])
         if tables[key] == nil and needed then
             return nil, path
         end
@@ -804,6 +1090,12 @@ local function buildPlan(settings)
     end
     if settings.bosses then
         shuffleBosses(plan, settings, tables)
+    end
+    if settings.abilities then
+        shuffleVisionAbilities(plan, settings, tables)
+    end
+    if settings.finishers then
+        shuffleFinishers(plan, settings, tables)
     end
     return plan
 end
@@ -843,6 +1135,9 @@ local function applyPatch(row, patch)
         else
             target = target[patch.index]
         end
+    end
+    if patch.sub ~= nil then
+        target, key = target[key], patch.sub
     end
     if target[key] == patch.value then
         return false

@@ -356,13 +356,26 @@ namespace FFRRandomizerGui
     {
         const int Pad = 20;
         const int ContentWidth = 520;
-        const int FullHeight = 1234;
         const int HeaderHeight = 52;
         const int FooterHeight = 124;
+        // Space above the first section and below the last one.
+        const int ContentTop = 19;
+        const int ContentBottom = 10;
+        // Two columns of sections need this much width, and the first SplitAt
+        // sections go in the left column.
+        const int TwoColumnWidth = 2 * ContentWidth + 3 * Pad;
+        const int SplitAt = 3;
 
-        // The settings between the header and the footer. It scrolls when the
-        // screen is too short for the whole window.
+        // The settings between the header and the footer, one panel per
+        // section. The body scrolls when the window is too short for them.
         readonly Panel body = new Panel();
+        readonly List<Panel> sections = new List<Panel>();
+        int fullHeight;
+        bool layingOut;
+        bool layoutQueued;
+        bool loaded;
+        // Where AddLabel and the other helpers put new controls.
+        Control target;
 
         readonly TextBox folderBox = new TextBox();
         readonly Label folderStatus = new Label();
@@ -396,7 +409,6 @@ namespace FFRRandomizerGui
             BackColor = Theme.Ground;
             ForeColor = Theme.Text;
             Font = Theme.Ui(10f, FontStyle.Regular);
-            ClientSize = new Size(560, FullHeight);
             using (Stream icon = typeof(MainForm).Assembly.GetManifestResourceStream("FFRRandomizerGui.icon.ico"))
             {
                 if (icon != null)
@@ -405,16 +417,28 @@ namespace FFRRandomizerGui
                 }
             }
 
+            sections.Add(BuildSection(BuildFolder));
+            sections.Add(BuildSection(BuildSeed));
+            sections.Add(BuildSection(BuildShuffles));
+            sections.Add(BuildSection(BuildAbilities));
+            sections.Add(BuildSection(BuildQuantity));
+            sections.Add(BuildSection(BuildComingLater));
+            int left = 0, right = 0;
+            for (int i = 0; i < sections.Count; i++)
+            {
+                if (i < SplitAt) left += sections[i].Height; else right += sections[i].Height;
+            }
+            fullHeight = HeaderHeight + 1 + ContentTop + Math.Max(left, right) + ContentBottom + FooterHeight;
+
+            // Built at the one-column width so every anchor measures from the
+            // design layout, then widened to two columns.
+            target = this;
+            ClientSize = new Size(ContentWidth + 2 * Pad, fullHeight);
             BuildHeader();
-            int y = 72;
-            y = BuildFolder(y);
-            y = BuildSeed(y);
-            y = BuildShuffles(y);
-            y = BuildAbilities(y);
-            y = BuildQuantity(y);
-            BuildComingLater(y);
             BuildFooter();
             BuildBody();
+            ClientSize = new Size(TwoColumnWidth, fullHeight);
+            LayOutSections();
 
             LoadState();
             ActiveControl = createButton;
@@ -424,32 +448,101 @@ namespace FFRRandomizerGui
         // panel, and pins the footer to the bottom edge.
         void BuildBody()
         {
-            int footerTop = FullHeight - FooterHeight;
+            int footerTop = fullHeight - FooterHeight;
+            foreach (Control control in Controls)
+            {
+                Stretch(control, control.Top >= footerTop ? AnchorStyles.Bottom : AnchorStyles.Top);
+            }
             body.AutoScroll = true;
             body.BackColor = Theme.Ground;
             body.Location = new Point(0, HeaderHeight + 1);
             body.Size = new Size(ClientSize.Width, footerTop - HeaderHeight - 1);
             body.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            List<Control> settings = new List<Control>();
-            foreach (Control control in Controls)
+            foreach (Panel section in sections)
             {
-                if (control.Top > HeaderHeight && control.Top < footerTop)
-                {
-                    settings.Add(control);
-                }
-                else
-                {
-                    Stretch(control, control.Top >= footerTop ? AnchorStyles.Bottom : AnchorStyles.Top);
-                }
+                body.Controls.Add(section);
             }
-            foreach (Control control in settings)
+            // Laid out after the resize finishes: moving the sections while the
+            // window is mid-resize leaves the body's scroll area at its old size.
+            body.Resize += delegate
             {
-                Controls.Remove(control);
-                control.Top -= HeaderHeight + 1;
-                body.Controls.Add(control);
+                if (!body.IsHandleCreated)
+                {
+                    LayOutSections();
+                }
+                else if (!layoutQueued)
+                {
+                    layoutQueued = true;
+                    body.BeginInvoke(new MethodInvoker(delegate { layoutQueued = false; LayOutSections(); }));
+                }
+            };
+            Controls.Add(body);
+        }
+
+        // One section of settings in its own panel, laid out at the design
+        // width with the usual side margins, so its controls keep their places.
+        Panel BuildSection(Func<int, int> build)
+        {
+            Panel panel = new Panel();
+            panel.BackColor = Theme.Ground;
+            panel.Width = ContentWidth + 2 * Pad;
+            target = panel;
+            panel.Height = build(0);
+            foreach (Control control in panel.Controls)
+            {
                 Stretch(control, AnchorStyles.Top);
             }
-            Controls.Add(body);
+            return panel;
+        }
+
+        // Two columns when the window is wide enough for both at their design
+        // width, otherwise one. Sections stretch to the column width, and the
+        // window can't grow taller than the columns need.
+        void LayOutSections()
+        {
+            if (layingOut || sections.Count == 0)
+            {
+                return;
+            }
+            layingOut = true;
+            float s = body.Top / (float)(HeaderHeight + 1);
+            int pad = (int)Math.Round(Pad * s);
+            int columns = body.Width >= (int)(TwoColumnWidth * s) ? 2 : 1;
+            int top = (int)Math.Round(ContentTop * s);
+            int bottom = (int)Math.Round(ContentBottom * s);
+            int[] bottoms = { top, top };
+            for (int i = 0; i < sections.Count; i++)
+            {
+                bottoms[columns == 2 && i >= SplitAt ? 1 : 0] += sections[i].Height;
+            }
+            // Leave room for the scroll bar whenever the columns don't fit, so
+            // the sections never need a sideways one.
+            int available = body.Width;
+            if (Math.Max(bottoms[0], bottoms[1]) + bottom > body.Height)
+            {
+                available -= SystemInformation.VerticalScrollBarWidth;
+            }
+            int width = (available - pad * (columns + 1)) / columns;
+            // Resuming layout afterwards makes the body measure its scroll area again.
+            body.SuspendLayout();
+            body.AutoScrollMargin = new Size(0, bottom);
+            int[] tops = { top, top };
+            for (int i = 0; i < sections.Count; i++)
+            {
+                int column = columns == 2 && i >= SplitAt ? 1 : 0;
+                Panel section = sections[i];
+                section.SetBounds(column * (width + pad), tops[column] + body.AutoScrollPosition.Y,
+                    width + 2 * pad, section.Height);
+                tops[column] += section.Height;
+            }
+            body.ResumeLayout(true);
+            if (loaded)
+            {
+                int needed = body.Top + Math.Max(bottoms[0], bottoms[1]) + (int)Math.Round((ContentBottom + FooterHeight) * s)
+                    + Height - ClientSize.Height;
+                MaximumSize = new Size(MaximumSize.Width, Math.Max(needed, MinimumSize.Height));
+            }
+            layingOut = false;
         }
 
         // Controls that start at the left margin widen with the window, and
@@ -471,26 +564,35 @@ namespace FFRRandomizerGui
             }
         }
 
-        // Opens at most three quarters of the screen's height, so it fits lower
-        // resolutions and high scaling, and the settings scroll. The window can
-        // be dragged taller or wider, but not narrower than its design width or
-        // shorter than the header, footer and a few rows of settings, and not
-        // taller than everything at once.
+        // Opens with two columns, sized to show every setting, or one column on
+        // a screen too narrow for two. On a screen too short, it opens at 90% of
+        // the height and the settings scroll. The window can be dragged wider,
+        // narrower down to one column, or shorter down to the header, footer and
+        // a few rows of settings, but not taller than the columns need.
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
             Rectangle area = Screen.FromControl(this).WorkingArea;
-            int frame = Height - ClientSize.Height;
-            int scaled = (HeaderHeight + FooterHeight + 240) * DeviceDpi / 96 + frame;
-            MinimumSize = new Size(Width, Math.Min(scaled, area.Height));
-            MaximumSize = new Size(Width * 8 / 5, Height);
-            int fit = area.Height * 3 / 4;
+            int frameWidth = Width - ClientSize.Width;
+            int frameHeight = Height - ClientSize.Height;
+            float s = DeviceDpi / 96f;
+            int narrow = (int)Math.Round((ContentWidth + 2 * Pad) * s) + frameWidth;
+            if (Width > area.Width)
+            {
+                Width = narrow;
+            }
+            int shortest = (int)Math.Round((HeaderHeight + FooterHeight + 240) * s) + frameHeight;
+            MinimumSize = new Size(narrow, Math.Min(shortest, area.Height));
+            MaximumSize = new Size((int)Math.Round(TwoColumnWidth * s * 1.4f) + frameWidth, SystemInformation.MaxWindowTrackSize.Height);
+            loaded = true;
+            LayOutSections();
+            int fit = area.Height * 9 / 10;
             if (Height > fit)
             {
                 Height = Math.Max(fit, MinimumSize.Height);
-                Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + (area.Height - Height) / 2);
-                Invalidate();
             }
+            Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + (area.Height - Height) / 2);
+            Invalidate();
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -530,7 +632,7 @@ namespace FFRRandomizerGui
             label.Font = font;
             label.ForeColor = color;
             label.BackColor = Color.Transparent;
-            Controls.Add(label);
+            target.Controls.Add(label);
             return label;
         }
 
@@ -551,7 +653,7 @@ namespace FFRRandomizerGui
             button.BackColor = Theme.Button;
             button.ForeColor = Theme.Text;
             button.Cursor = Cursors.Hand;
-            Controls.Add(button);
+            target.Controls.Add(button);
             return button;
         }
 
@@ -569,7 +671,7 @@ namespace FFRRandomizerGui
             box.Width = width - 24;
             box.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             card.Controls.Add(box);
-            Controls.Add(card);
+            target.Controls.Add(card);
             return card;
         }
 
@@ -593,7 +695,7 @@ namespace FFRRandomizerGui
             folderStatus.Size = new Size(ContentWidth, 20);
             folderStatus.Font = Theme.Ui(9.5f, FontStyle.Regular);
             folderStatus.BackColor = Color.Transparent;
-            Controls.Add(folderStatus);
+            target.Controls.Add(folderStatus);
             return y + 104;
         }
 
@@ -649,7 +751,7 @@ namespace FFRRandomizerGui
             card.Radius = 10;
             card.Location = new Point(Pad, y + 22);
             card.Size = new Size(ContentWidth, rows * 64);
-            Controls.Add(card);
+            target.Controls.Add(card);
             card.Paint += delegate(object sender, PaintEventArgs e)
             {
                 using (Pen pen = new Pen(Theme.Border))
@@ -696,7 +798,7 @@ namespace FFRRandomizerGui
             card.Radius = 10;
             card.Location = new Point(Pad, y + 22);
             card.Size = new Size(ContentWidth, 48);
-            Controls.Add(card);
+            target.Controls.Add(card);
             string[] labels = { "Default", "Up to 9", "Up to 50" };
             int width = (ContentWidth - 8 - 8) / 3;
             for (int i = 0; i < 3; i++)
@@ -723,7 +825,7 @@ namespace FFRRandomizerGui
             quantityHelp.Font = Theme.Ui(9.5f, FontStyle.Regular);
             quantityHelp.ForeColor = Theme.Muted;
             quantityHelp.BackColor = Color.Transparent;
-            Controls.Add(quantityHelp);
+            target.Controls.Add(quantityHelp);
             return y + 108;
         }
 
@@ -742,18 +844,19 @@ namespace FFRRandomizerGui
             }
         }
 
-        void BuildComingLater(int y)
+        int BuildComingLater(int y)
         {
             AddHeading("Coming later", y);
             AddLabel("Gear options", Pad, y + 22, ContentWidth,
                 Theme.Ui(10f, FontStyle.Regular), Theme.Muted);
+            return y + 50;
         }
 
         void BuildFooter()
         {
             savedCard.Outline = Theme.GoodBorder;
             savedCard.BackColor = Theme.GoodBack;
-            savedCard.Location = new Point(Pad, FullHeight - 112);
+            savedCard.Location = new Point(Pad, fullHeight - 112);
             savedCard.Size = new Size(ContentWidth, 44);
             savedText.Location = new Point(12, 4);
             savedText.Size = new Size(ContentWidth - 24, 36);
@@ -765,7 +868,7 @@ namespace FFRRandomizerGui
             Controls.Add(savedCard);
 
             createButton.Text = "Create Randomizer File";
-            createButton.Location = new Point(Pad, FullHeight - 60);
+            createButton.Location = new Point(Pad, fullHeight - 60);
             createButton.Size = new Size(358, 48);
             createButton.FlatStyle = FlatStyle.Flat;
             createButton.FlatAppearance.BorderSize = 0;
@@ -778,7 +881,7 @@ namespace FFRRandomizerGui
             Controls.Add(createButton);
             AcceptButton = createButton;
 
-            Button spoiler = MakeButton("Open spoiler log", 388, FullHeight - 60, 152, 48);
+            Button spoiler = MakeButton("Open spoiler log", 388, fullHeight - 60, 152, 48);
             spoiler.BackColor = Theme.Ground;
             spoiler.Click += delegate { OpenSpoiler(); };
         }

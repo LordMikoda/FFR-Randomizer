@@ -3,7 +3,7 @@
 -- applies it in memory. Nothing on disk in the game changes, and removing this
 -- folder undoes everything.
 
-local MOD_VERSION = "0.4.1"
+local MOD_VERSION = "0.5.0"
 local LOG_PREFIX = "[FFRRandomizer] "
 local CHECK_INTERVAL_MS = 3000
 
@@ -30,6 +30,11 @@ if not hasAbilities or type(VISION_ABILITIES) ~= "table" then
     VISION_ABILITIES = nil
 end
 
+local hasMoves, CHARACTER_MOVES = pcall(require, "CharacterMoves")
+if not hasMoves or type(CHARACTER_MOVES) ~= "table" then
+    CHARACTER_MOVES = nil
+end
+
 local TABLES = {
     chests = "/Game/Datatable/Map/Gimmick/TreasureBox/CDT_MapGimmickTreasureBox.CDT_MapGimmickTreasureBox",
     units = "/Game/Datatable/Unit/DT_UnitParameter.DT_UnitParameter",
@@ -49,6 +54,17 @@ local TABLES = {
 local OPTIONAL_TABLES = { questBoard = true }
 local ENEMY_TABLES = { battleGroups = true, unitDesign = true }
 local ABILITY_TABLES = { awakening = true, synchro = true, skills = true, passives = true }
+
+-- Each playable character's level table, keyed "level" .. its suffix, such as
+-- levelRain. Only the character shuffles need them.
+local CHARACTER_TABLES = {}
+for _, character in ipairs(CHARACTER_MOVES and CHARACTER_MOVES.characters or {}) do
+    local name = "DT_UnitLevelParameter" .. character.table
+    TABLES["level" .. character.table] = "/Game/Datatable/Unit/LevelParameter/Playable/" .. name .. "." .. name
+    CHARACTER_TABLES["level" .. character.table] = true
+end
+-- The stats Random character stats trades between. HP and MP stay put.
+local CHARACTER_STATS = { "Attack", "Defence", "Intelligence", "Mind", "Agility" }
 
 -- Only Consumable, Equipment and Seed items move. Valuables, Artifacts and
 -- Visions are key items or have their own rules, so they never leave their spot.
@@ -98,9 +114,10 @@ local UNIT_SIZES = { [1] = "S", [2] = "M", [3] = "L", [4] = "LL", [5] = "XL" }
 
 local VISION_COUNT = 26
 
--- Leah, Ayaka and Y'shtola. With supports on, each keeps at least
--- SUPPORT_MIN_HEALING abilities from HEALING_SKILLS.
-local SUPPORT_VISIONS = { [13045] = true, [13051] = true, [13127] = true }
+-- Leah, Ayaka and Y'shtola among the Visions, and Fina among the characters.
+-- With supports on, each keeps at least SUPPORT_MIN_HEALING abilities from
+-- HEALING_SKILLS.
+local SUPPORTS = { [13045] = true, [13051] = true, [13127] = true, [1003] = true }
 local SUPPORT_MIN_HEALING = 5
 -- Abilities that heal, revive or cure allies. The skill table can't tell
 -- these apart from buffs, so the list is by hand.
@@ -134,6 +151,11 @@ abilities=%s
 mix_physical_magic=%s
 finishers=%s
 supports=%s
+# Characters. mix_character_moves only matters with character_moves or character_finishers on.
+character_moves=%s
+character_finishers=%s
+mix_character_moves=%s
+character_stats=%s
 # default, 9 or 50. Weapons, armor and accessories always stay at 1.
 chest_quantity=%s
 ]]
@@ -152,7 +174,8 @@ local function writeSettings(settings)
     file:write(string.format(SETTINGS_TEMPLATE, settings.seed, onOff(settings.items),
         onOff(settings.shops), onOff(settings.visions), onOff(settings.enemies), onOff(settings.bosses),
         onOff(settings.abilities), onOff(settings.mixAbilities), onOff(settings.finishers),
-        onOff(settings.supports), settings.chestQuantity))
+        onOff(settings.supports), onOff(settings.characterMoves), onOff(settings.characterFinishers),
+        onOff(settings.mixCharacters), onOff(settings.characterStats), settings.chestQuantity))
     file:close()
 end
 
@@ -186,6 +209,10 @@ local function readSettings()
         mixAbilities = flag("mix_physical_magic", "off"),
         finishers = flag("finishers", "off"),
         supports = flag("supports", "off"),
+        characterMoves = flag("character_moves", "off"),
+        characterFinishers = flag("character_finishers", "off"),
+        mixCharacters = flag("mix_character_moves", "off"),
+        characterStats = flag("character_stats", "off"),
         chestQuantity = (values.chest_quantity or "default"):lower(),
     }
     if CHEST_CAPS[settings.chestQuantity] == nil then
@@ -821,7 +848,7 @@ local function readAbilitySlots(tables)
                 local kinds = kindsOfType[entry.parameterType] or {}
                 kindsOfType[entry.parameterType] = kinds
                 kinds[kind] = true
-                table.insert(found, { family = family, row = name, index = i, vision = row.ID,
+                table.insert(found, { family = family, row = name, index = i, owner = row.ID,
                     type = entry.parameterType, kind = kind, original = id, value = id })
             end
         end
@@ -845,18 +872,20 @@ local function abilityKey(slot, id)
     return "a" .. tostring(id)
 end
 
+-- held[owner][key] counts what each owner (a Vision, or a character's unit)
+-- holds, so a swap can be checked for clashes.
 local function holdAbility(held, slot, change)
     local key = abilityKey(slot, slot.value)
-    held[slot.vision][key] = (held[slot.vision][key] or 0) + change
+    held[slot.owner][key] = (held[slot.owner][key] or 0) + change
 end
 
--- Whether swapping a's and b's abilities leaves neither Vision with a clash.
+-- Whether swapping a's and b's abilities leaves neither owner with a clash.
 local function canSwap(held, a, b)
-    if a.vision == b.vision then
+    if a.owner == b.owner then
         return false
     end
     local keyA, keyB = abilityKey(a, a.value), abilityKey(b, b.value)
-    return keyA ~= keyB and (held[a.vision][keyB] or 0) == 0 and (held[b.vision][keyA] or 0) == 0
+    return keyA ~= keyB and (held[a.owner][keyB] or 0) == 0 and (held[b.owner][keyA] or 0) == 0
 end
 
 local function swapAbilities(held, a, b)
@@ -867,7 +896,7 @@ local function swapAbilities(held, a, b)
     holdAbility(held, b, 1)
 end
 
--- The first slot in the pool, from a random start, that b can swap with.
+-- The first slot in the pool, from a random start, that passes the test.
 local function findSwap(pool, rng, test)
     local start = rng.int(#pool)
     for step = 0, #pool - 1 do
@@ -879,43 +908,37 @@ local function findSwap(pool, rng, test)
     return nil
 end
 
-local function healingCount(pool, vision)
+local function healingCount(pool, owner)
     local count = 0
     for _, slot in ipairs(pool) do
-        if slot.vision == vision and HEALING_SKILLS[slot.value] then
+        if slot.owner == owner and HEALING_SKILLS[slot.value] then
             count = count + 1
         end
     end
     return count
 end
 
--- Abilities swap between slots of the same kind, so each Vision keeps its
--- number of actives and passives and when it learns them. Physical and Magic
--- Visions shuffle apart unless mixing is on. A repair pass then clears any
--- Vision holding one ability twice, or two passives from one stat family.
--- The same ability on two different Visions is fine, as in the base game.
-local function shuffleVisionAbilities(plan, settings, tables)
-    if VISION_ABILITIES == nil then
-        log("VisionAbilities.lua is missing. Vision abilities not shuffled.")
-        return
-    end
-    local slots = readAbilitySlots(tables)
-
+-- Shuffles each slot's ability within its pool, groupOf(slot) naming the pool,
+-- so every owner keeps its number of slots of each kind and the level they
+-- come at. A repair pass then clears any owner holding one ability twice, or
+-- two passives from one stat family; the same ability on two owners is fine,
+-- as in the base game. With supports on, each support owner takes healing
+-- from non-supports in its "active" or "move" pool, giving back one of its
+-- other abilities. Returns the clashes the repair couldn't clear.
+local function shuffleOwnedSlots(slots, groupOf, rng, supports, nameOf)
     local pools, poolNames, held = {}, {}, {}
     for _, slot in ipairs(slots) do
-        local group = settings.mixAbilities and "All"
-            or (VISION_ABILITIES.physical[slot.vision] and "Physical" or "Magic")
-        local name = group .. " " .. slot.kind
+        local name = groupOf(slot) .. " " .. slot.kind
+        slot.pool = name
         if pools[name] == nil then
             pools[name] = {}
             table.insert(poolNames, name)
         end
         table.insert(pools[name], slot)
-        held[slot.vision] = held[slot.vision] or {}
+        held[slot.owner] = held[slot.owner] or {}
     end
     table.sort(poolNames)
 
-    local rng = newRng(settings.seed, "abilities")
     for _, name in ipairs(poolNames) do
         local pool = pools[name]
         local values = {}
@@ -935,7 +958,7 @@ local function shuffleVisionAbilities(plan, settings, tables)
     for _, name in ipairs(poolNames) do
         local pool = pools[name]
         for _, slot in ipairs(pool) do
-            while held[slot.vision][abilityKey(slot, slot.value)] > 1 do
+            while held[slot.owner][abilityKey(slot, slot.value)] > 1 do
                 local other = findSwap(pool, rng, function(other) return canSwap(held, slot, other) end)
                 if other == nil then
                     clashes = clashes + 1
@@ -946,26 +969,23 @@ local function shuffleVisionAbilities(plan, settings, tables)
         end
     end
 
-    -- Supports take healing from other Visions in their own pool, never from
-    -- another support, giving back one of their other abilities in exchange.
-    if settings.supports then
-        local supports = {}
-        for vision in pairs(SUPPORT_VISIONS) do
-            if held[vision] ~= nil then
-                table.insert(supports, vision)
+    if supports then
+        local owners, poolOf = {}, {}
+        for _, slot in ipairs(slots) do
+            if SUPPORTS[slot.owner] and (slot.kind == "active" or slot.kind == "move") and poolOf[slot.owner] == nil then
+                poolOf[slot.owner] = pools[slot.pool]
+                table.insert(owners, slot.owner)
             end
         end
-        table.sort(supports)
-        for _, vision in ipairs(supports) do
-            local group = settings.mixAbilities and "All"
-                or (VISION_ABILITIES.physical[vision] and "Physical" or "Magic")
-            local pool = pools[group .. " active"] or {}
-            while healingCount(pool, vision) < SUPPORT_MIN_HEALING do
+        table.sort(owners)
+        for _, owner in ipairs(owners) do
+            local pool = poolOf[owner]
+            while healingCount(pool, owner) < SUPPORT_MIN_HEALING do
                 local given, taken
                 for _, slot in ipairs(pool) do
-                    if slot.vision == vision and not HEALING_SKILLS[slot.value] then
+                    if slot.owner == owner and not HEALING_SKILLS[slot.value] then
                         taken = findSwap(pool, rng, function(other)
-                            return HEALING_SKILLS[other.value] and not SUPPORT_VISIONS[other.vision]
+                            return HEALING_SKILLS[other.value] and not SUPPORTS[other.owner]
                                 and canSwap(held, slot, other)
                         end)
                         if taken ~= nil then
@@ -975,14 +995,28 @@ local function shuffleVisionAbilities(plan, settings, tables)
                     end
                 end
                 if given == nil then
-                    log(string.format("Only %d healing abilities for %s.", healingCount(pool, vision),
-                        itemName(vision)))
+                    log(string.format("Only %d healing abilities for %s.", healingCount(pool, owner), nameOf(owner)))
                     break
                 end
                 swapAbilities(held, given, taken)
             end
         end
     end
+    return clashes
+end
+
+-- Abilities and passives swap among the Visions, Physical and Magic apart
+-- unless mixing is on.
+local function shuffleVisionAbilities(plan, settings, tables)
+    if VISION_ABILITIES == nil then
+        log("VisionAbilities.lua is missing. Vision abilities not shuffled.")
+        return
+    end
+    local slots = readAbilitySlots(tables)
+    local function groupOf(slot)
+        return settings.mixAbilities and "All" or (VISION_ABILITIES.physical[slot.owner] and "Physical" or "Magic")
+    end
+    local clashes = shuffleOwnedSlots(slots, groupOf, newRng(settings.seed, "abilities"), settings.supports, itemName)
 
     local changed = 0
     local byVision, visions = {}, {}
@@ -991,11 +1025,11 @@ local function shuffleVisionAbilities(plan, settings, tables)
             changed = changed + 1
             addPatch(plan, slot.family, slot.row, "params", slot.value, "detailData", slot.index, 1)
         end
-        if byVision[slot.vision] == nil then
-            byVision[slot.vision] = { active = {}, passive = {} }
-            table.insert(visions, slot.vision)
+        if byVision[slot.owner] == nil then
+            byVision[slot.owner] = { active = {}, passive = {} }
+            table.insert(visions, slot.owner)
         end
-        table.insert(byVision[slot.vision][slot.kind], abilityName(slot.value))
+        table.insert(byVision[slot.owner][slot.kind], abilityName(slot.value))
     end
     table.sort(visions, function(a, b) return itemName(a) < itemName(b) end)
     for _, vision in ipairs(visions) do
@@ -1030,6 +1064,141 @@ local function shuffleFinishers(plan, settings, tables)
     log(string.format("Finishers: %d shuffled.", #slots))
 end
 
+-- Characters ----------------------------------------------------------------
+
+local function characterName(unit)
+    for _, character in ipairs(CHARACTER_MOVES.characters) do
+        if character.unit == unit then
+            return character.name
+        end
+    end
+    return "Unit " .. tostring(unit)
+end
+
+local function moveName(id)
+    return CHARACTER_MOVES.names[id] or abilityName(id)
+end
+
+-- Level-up moves and finishers swap between characters' level rows, so each
+-- character keeps how many it learns and at which levels, including the ones
+-- before a late join. Moves and finishers each shuffle among characters of the
+-- same attack type unless mixing is on. Skills in CHARACTER_MOVES.fixed (Lid's
+-- Mechabo and Darkfina's Witching Hour pair) stay put. With supports on, Fina
+-- keeps her healing like the support Visions.
+local function shuffleCharacters(plan, settings, tables)
+    if CHARACTER_MOVES == nil then
+        log("CharacterMoves.lua is missing. Characters not shuffled.")
+        return
+    end
+    local slots, physical, missing = {}, {}, {}
+    for _, character in ipairs(CHARACTER_MOVES.characters) do
+        physical[character.unit] = character.physical
+        local family = "level" .. character.table
+        local dataTable = tables[family]
+        if dataTable == nil then
+            table.insert(missing, character.name)
+        else
+            for _, name in ipairs(sortedRowNames(dataTable)) do
+                local row = dataTable:FindRow(name)
+                for i, id in ipairs(arrayItems(row.AddSkills)) do
+                    if id > 0 and not CHARACTER_MOVES.fixed[id] then
+                        local kind = CHARACTER_MOVES.finishers[id] and "finisher" or "move"
+                        if (kind == "move" and settings.characterMoves) or (kind == "finisher" and settings.characterFinishers) then
+                            table.insert(slots, { family = family, row = name, index = i, owner = character.unit,
+                                level = row.Level, kind = kind, original = id, value = id })
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if #missing > 0 then
+        log("Level tables not found for " .. table.concat(missing, ", ") .. ". Their moves stay put.")
+    end
+    local function groupOf(slot)
+        return settings.mixCharacters and "All" or (physical[slot.owner] and "Physical" or "Magic")
+    end
+    local clashes = shuffleOwnedSlots(slots, groupOf, newRng(settings.seed, "characters"),
+        settings.supports and settings.characterMoves, characterName)
+
+    local changed = 0
+    local learned = {}
+    for _, slot in ipairs(slots) do
+        if slot.value ~= slot.original then
+            changed = changed + 1
+            addPatch(plan, slot.family, slot.row, nil, slot.value, "AddSkills", slot.index)
+        end
+        learned[slot.owner] = learned[slot.owner] or {}
+        table.insert(learned[slot.owner], slot)
+    end
+    for _, character in ipairs(CHARACTER_MOVES.characters) do
+        local list = learned[character.unit]
+        if list ~= nil then
+            table.sort(list, function(a, b)
+                if a.level ~= b.level then return a.level < b.level end
+                return a.index < b.index
+            end)
+            local parts = {}
+            for _, slot in ipairs(list) do
+                table.insert(parts, string.format("L%d %s%s", slot.level, moveName(slot.value),
+                    slot.kind == "finisher" and " (finisher)" or ""))
+            end
+            addSpoiler(plan, "Characters", character.name .. "\n  " .. table.concat(parts, ", "))
+        end
+    end
+    log(string.format("Characters: %d move and finisher slots, %d changed, %s, %d clashes left.", #slots, changed,
+        settings.mixCharacters and "Physical and Magic mixed" or "Physical and Magic apart", clashes))
+end
+
+-- Each character's Attack, Defence, Intelligence, Mind and Agility trade
+-- places, base stats and level-up gains alike, so the total stays the same
+-- and HP and MP are untouched. Rain might grow Intelligence on his Attack
+-- curve, for example.
+local function shuffleCharacterStats(plan, settings, tables)
+    if CHARACTER_MOVES == nil then
+        log("CharacterMoves.lua is missing. Character stats not shuffled.")
+        return
+    end
+    local unitRow = {}
+    for _, name in ipairs(sortedRowNames(tables.units)) do
+        local row = tables.units:FindRow(name)
+        unitRow[row.ID] = unitRow[row.ID] or name
+    end
+    local rng = newRng(settings.seed, "stats")
+    local shuffled = 0
+    for _, character in ipairs(CHARACTER_MOVES.characters) do
+        local from = { table.unpack(CHARACTER_STATS) }
+        rng.shuffle(from)
+        local family = "level" .. character.table
+        local dataTable = tables[family]
+        if dataTable ~= nil then
+            shuffled = shuffled + 1
+            for _, name in ipairs(sortedRowNames(dataTable)) do
+                local row = dataTable:FindRow(name)
+                for i, stat in ipairs(CHARACTER_STATS) do
+                    addPatch(plan, family, name, "Add" .. stat, row["Add" .. from[i]])
+                end
+            end
+            local base = unitRow[character.unit]
+            if base ~= nil then
+                local row = tables.units:FindRow(base)
+                for i, stat in ipairs(CHARACTER_STATS) do
+                    addPatch(plan, "units", base, stat, row[from[i]])
+                end
+            end
+            local parts = {}
+            for i, stat in ipairs(CHARACTER_STATS) do
+                if from[i] ~= stat then
+                    table.insert(parts, stat .. " grows like " .. from[i])
+                end
+            end
+            addSpoiler(plan, "Character stats", string.format("%-15s %s", character.name,
+                #parts > 0 and table.concat(parts, ", ") or "unchanged"))
+        end
+    end
+    log(string.format("Character stats: %d characters reshuffled.", shuffled))
+end
+
 local function writeSpoiler(plan, settings)
     local path = MOD_DIR .. "Spoiler_" .. settings.seed:gsub("[^%w_-]", "_") .. ".txt"
     local file = io.open(path, "w")
@@ -1044,12 +1213,15 @@ local function writeSpoiler(plan, settings)
         onOff(settings.enemies), onOff(settings.bosses), settings.chestQuantity))
     file:write(string.format("Vision abilities: %s   Mix Physical and Magic: %s   Finishers: %s   Supports stay supports: %s\n",
         onOff(settings.abilities), onOff(settings.mixAbilities), onOff(settings.finishers), onOff(settings.supports)))
+    file:write(string.format("Character moves: %s   Character finishers: %s   Mix character moves: %s   Character stats: %s\n",
+        onOff(settings.characterMoves), onOff(settings.characterFinishers), onOff(settings.mixCharacters),
+        onOff(settings.characterStats)))
     if settings.enemies or settings.bosses then
         file:write("With enemies or bosses on, drops and steals stay with the spot: a unit's list below\n" ..
             "goes to whichever unit fights in its place.\n")
     end
-    for _, section in ipairs({ "Visions", "Vision abilities", "Finishers", "Bosses", "Enemies", "Chests",
-        "Drops and steals", "Shops" }) do
+    for _, section in ipairs({ "Visions", "Vision abilities", "Finishers", "Characters", "Character stats",
+        "Bosses", "Enemies", "Chests", "Drops and steals", "Shops" }) do
         local lines = plan.spoiler[section]
         if lines ~= nil then
             file:write("\n== " .. section .. " ==\n")
@@ -1067,6 +1239,8 @@ local function buildPlan(settings)
         local needed = not OPTIONAL_TABLES[key]
             and (settings.enemies or settings.bosses or not ENEMY_TABLES[key])
             and (settings.abilities or not ABILITY_TABLES[key])
+            and (settings.characterMoves or settings.characterFinishers or settings.characterStats
+                or not CHARACTER_TABLES[key])
         if tables[key] == nil and needed then
             return nil, path
         end
@@ -1096,6 +1270,12 @@ local function buildPlan(settings)
     end
     if settings.finishers then
         shuffleFinishers(plan, settings, tables)
+    end
+    if settings.characterMoves or settings.characterFinishers then
+        shuffleCharacters(plan, settings, tables)
+    end
+    if settings.characterStats then
+        shuffleCharacterStats(plan, settings, tables)
     end
     return plan
 end

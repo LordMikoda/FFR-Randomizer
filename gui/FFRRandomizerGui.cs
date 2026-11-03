@@ -16,7 +16,7 @@ using Microsoft.Win32;
 
 [assembly: System.Reflection.AssemblyTitle("FFR Randomizer")]
 [assembly: System.Reflection.AssemblyProduct("FFR Randomizer")]
-[assembly: System.Reflection.AssemblyVersion("0.4.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.5.0.0")]
 
 namespace FFRRandomizerGui
 {
@@ -67,8 +67,13 @@ namespace FFRRandomizerGui
             "mix_physical_magic={7}\n" +
             "finishers={8}\n" +
             "supports={9}\n" +
+            "# Characters. mix_character_moves only matters with character_moves or character_finishers on.\n" +
+            "character_moves={10}\n" +
+            "character_finishers={11}\n" +
+            "mix_character_moves={12}\n" +
+            "character_stats={13}\n" +
             "# default, 9 or 50. Weapons, armor and accessories always stay at 1.\n" +
-            "chest_quantity={10}\n";
+            "chest_quantity={14}\n";
 
         public static string ModDir(string gameDir)
         {
@@ -170,10 +175,12 @@ namespace FFRRandomizerGui
         }
 
         public static void WriteSettings(string gameDir, string seed, bool items, bool shops, bool visions, bool enemies, bool bosses,
-            bool abilities, bool mixAbilities, bool finishers, bool supports, string quantity)
+            bool abilities, bool mixAbilities, bool finishers, bool supports,
+            bool moves, bool characterFinishers, bool mixCharacters, bool stats, string quantity)
         {
             string text = string.Format(Template, seed, OnOff(items), OnOff(shops), OnOff(visions), OnOff(enemies), OnOff(bosses),
-                OnOff(abilities), OnOff(mixAbilities), OnOff(finishers), OnOff(supports), quantity);
+                OnOff(abilities), OnOff(mixAbilities), OnOff(finishers), OnOff(supports),
+                OnOff(moves), OnOff(characterFinishers), OnOff(mixCharacters), OnOff(stats), quantity);
             File.WriteAllText(SettingsFile(gameDir), text, new UTF8Encoding(false));
         }
 
@@ -352,24 +359,160 @@ namespace FFRRandomizerGui
         }
     }
 
+    // A tab in the strip above the options. The selected one is a raised panel
+    // with an accent line along its bottom; the others are plain text.
+    class TabButton : Control
+    {
+        bool selected;
+        string count = "";
+
+        public TabButton()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+                     ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+            Cursor = Cursors.Hand;
+            TabStop = true;
+            AccessibleRole = AccessibleRole.PageTab;
+        }
+
+        public bool Selected
+        {
+            get { return selected; }
+            set { selected = value; AccessibleDescription = value ? "Selected" : ""; Invalidate(); }
+        }
+
+        // How many of the tab's options are on, shown after its name.
+        public string Count
+        {
+            get { return count; }
+            set { count = value; Invalidate(); }
+        }
+
+        protected override void OnClick(EventArgs e)
+        {
+            Focus();
+            base.OnClick(e);
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Space || e.KeyCode == Keys.Enter)
+            {
+                OnClick(EventArgs.Empty);
+                e.Handled = true;
+            }
+            base.OnKeyDown(e);
+        }
+
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(Parent != null ? Parent.BackColor : Theme.Ground);
+            float s = DeviceDpi / 96f;
+            if (selected)
+            {
+                // Rounded at the top only: the shape runs past the bottom edge.
+                Rectangle shape = new Rectangle(0, 0, Width - 1, Height + (int)(10 * s));
+                using (GraphicsPath path = Shapes.Rounded(shape, (int)(8 * s)))
+                using (Brush fill = new SolidBrush(Theme.Panel))
+                using (Pen edge = new Pen(Focused ? Theme.Text : Theme.Border))
+                {
+                    g.FillPath(fill, path);
+                    g.DrawPath(edge, path);
+                }
+                using (Brush accent = new SolidBrush(Theme.Accent))
+                {
+                    g.FillRectangle(accent, 0, Height - 3 * s, Width, 3 * s);
+                }
+            }
+            else
+            {
+                using (Pen line = new Pen(Focused ? Theme.Muted : Theme.Border))
+                {
+                    g.DrawLine(line, 0, Height - 1, Width, Height - 1);
+                    if (Focused)
+                    {
+                        g.DrawRectangle(line, 0, 0, Width - 1, Height - 2);
+                    }
+                }
+            }
+            using (Font name = Theme.Ui(10.5f, selected ? FontStyle.Bold : FontStyle.Regular))
+            using (Font small = Theme.Ui(9f, FontStyle.Regular))
+            {
+                Size nameSize = TextRenderer.MeasureText(g, Text, name, Size.Empty, TextFormatFlags.NoPadding);
+                Size countSize = TextRenderer.MeasureText(g, count, small, Size.Empty, TextFormatFlags.NoPadding);
+                int gap = (int)(8 * s);
+                bool showCount = nameSize.Width + gap + countSize.Width + (int)(16 * s) <= Width;
+                int x = (Width - nameSize.Width - (showCount ? gap + countSize.Width : 0)) / 2;
+                int y = (Height - nameSize.Height) / 2;
+                TextRenderer.DrawText(g, Text, name, new Point(x, y), selected ? Theme.Text : Theme.Muted, TextFormatFlags.NoPadding);
+                if (showCount)
+                {
+                    TextRenderer.DrawText(g, count, small, new Point(x + nameSize.Width + gap, y + nameSize.Height - countSize.Height),
+                        Theme.Muted, TextFormatFlags.NoPadding);
+                }
+            }
+        }
+    }
+
+    // One tab of options: sections across the full width, then a left and a
+    // right column. Toggles are the ones its count covers.
+    class OptionTab
+    {
+        public TabButton Button = new TabButton();
+        public readonly List<Panel> Wide = new List<Panel>();
+        public readonly List<Panel> Left = new List<Panel>();
+        public readonly List<Panel> Right = new List<Panel>();
+        public readonly List<ToggleSwitch> Toggles = new List<ToggleSwitch>();
+
+        public IEnumerable<Panel> Sections
+        {
+            get
+            {
+                foreach (Panel panel in Wide) yield return panel;
+                foreach (Panel panel in Left) yield return panel;
+                foreach (Panel panel in Right) yield return panel;
+            }
+        }
+
+        // The tab's content height in the given number of columns.
+        public int ContentHeight(int columns)
+        {
+            int wide = 0, left = 0, right = 0;
+            foreach (Panel panel in Wide) wide += panel.Height;
+            foreach (Panel panel in Left) left += panel.Height;
+            foreach (Panel panel in Right) right += panel.Height;
+            return wide + (columns == 2 ? Math.Max(left, right) : left + right);
+        }
+    }
+
     class MainForm : Form
     {
         const int Pad = 20;
         const int ContentWidth = 520;
         const int HeaderHeight = 52;
         const int FooterHeight = 124;
-        // Space above the first section and below the last one.
-        const int ContentTop = 19;
+        // Space above the game folder and seed, the tab strip under them, and
+        // the space above and below a tab's options.
+        const int TopGap = 14;
+        const int StripHeight = 54;
+        const int ContentTop = 10;
         const int ContentBottom = 10;
-        // Two columns of sections need this much width, and the first SplitAt
-        // sections go in the left column.
+        // Two columns need this much width.
         const int TwoColumnWidth = 2 * ContentWidth + 3 * Pad;
-        const int SplitAt = 3;
 
-        // The settings between the header and the footer, one panel per
-        // section. The body scrolls when the window is too short for them.
+        Panel folderSection;
+        Panel seedSection;
+        readonly Panel strip = new Panel();
+        // The current tab's options. It scrolls when the window is too short.
         readonly Panel body = new Panel();
-        readonly List<Panel> sections = new List<Panel>();
+        readonly List<OptionTab> tabs = new List<OptionTab>();
+        readonly HashSet<ToggleSwitch> laterToggles = new HashSet<ToggleSwitch>();
+        OptionTab current;
         int fullHeight;
         bool layingOut;
         bool layoutQueued;
@@ -389,6 +532,10 @@ namespace FFRRandomizerGui
         readonly ToggleSwitch mixToggle = new ToggleSwitch();
         readonly ToggleSwitch supportsToggle = new ToggleSwitch();
         readonly ToggleSwitch finishersToggle = new ToggleSwitch();
+        readonly ToggleSwitch movesToggle = new ToggleSwitch();
+        readonly ToggleSwitch characterFinishersToggle = new ToggleSwitch();
+        readonly ToggleSwitch mixCharactersToggle = new ToggleSwitch();
+        readonly ToggleSwitch statsToggle = new ToggleSwitch();
         readonly RadioButton[] quantityButtons = new RadioButton[3];
         readonly string[] quantityValues = { "default", "9", "50" };
         readonly Label quantityHelp = new Label();
@@ -417,18 +564,16 @@ namespace FFRRandomizerGui
                 }
             }
 
-            sections.Add(BuildSection(BuildFolder));
-            sections.Add(BuildSection(BuildSeed));
-            sections.Add(BuildSection(BuildShuffles));
-            sections.Add(BuildSection(BuildAbilities));
-            sections.Add(BuildSection(BuildQuantity));
-            sections.Add(BuildSection(BuildComingLater));
-            int left = 0, right = 0;
-            for (int i = 0; i < sections.Count; i++)
+            folderSection = BuildSection(BuildFolder);
+            seedSection = BuildSection(BuildSeed);
+            BuildTabs();
+            int content = 0;
+            foreach (OptionTab tab in tabs)
             {
-                if (i < SplitAt) left += sections[i].Height; else right += sections[i].Height;
+                content = Math.Max(content, tab.ContentHeight(2));
             }
-            fullHeight = HeaderHeight + 1 + ContentTop + Math.Max(left, right) + ContentBottom + FooterHeight;
+            fullHeight = HeaderHeight + 1 + TopGap + Math.Max(folderSection.Height, seedSection.Height) + StripHeight
+                + ContentTop + content + ContentBottom + FooterHeight;
 
             // Built at the one-column width so every anchor measures from the
             // design layout, then widened to two columns.
@@ -436,47 +581,130 @@ namespace FFRRandomizerGui
             ClientSize = new Size(ContentWidth + 2 * Pad, fullHeight);
             BuildHeader();
             BuildFooter();
-            BuildBody();
+            foreach (Control control in Controls)
+            {
+                Stretch(control, control.Top >= fullHeight - FooterHeight ? AnchorStyles.Bottom : AnchorStyles.Top);
+            }
+            Controls.Add(folderSection);
+            Controls.Add(seedSection);
+            BuildStrip();
+            body.AutoScroll = true;
+            body.BackColor = Theme.Ground;
+            foreach (OptionTab tab in tabs)
+            {
+                foreach (Panel section in tab.Sections)
+                {
+                    section.Visible = false;
+                    body.Controls.Add(section);
+                }
+            }
+            Controls.Add(body);
             ClientSize = new Size(TwoColumnWidth, fullHeight);
-            LayOutSections();
+            SelectTab(tabs[0]);
 
             LoadState();
             ActiveControl = createButton;
         }
 
-        // Moves everything between the header and the footer into the body
-        // panel, and pins the footer to the bottom edge.
-        void BuildBody()
+        // The three tabs. Options marked LATER are shown but can't be turned on yet.
+        void BuildTabs()
         {
-            int footerTop = fullHeight - FooterHeight;
-            foreach (Control control in Controls)
+            OptionTab light = AddTab("We Are the Light");
+            light.Wide.Add(BuildSection(y => AddNote("The randomizer as intended: everything shuffles, every character and " +
+                "Vision stays playable, and the story can always be finished.", y)));
+            light.Left.Add(BuildSection(BuildShuffles));
+            light.Left.Add(BuildSection(BuildQuantity));
+            light.Right.Add(BuildSection(y => AddToggles(light, "Visions", y,
+                Row("Vision abilities", "Abilities and passives swap among Physical or Magic Visions.", abilitiesToggle),
+                Row("Supports stay supports", "Fina, Leah, Ayaka and Y’shtola keep 5 or more healing abilities.", supportsToggle),
+                Row("Vision finishers", "The 26 Vision finishers trade places.", finishersToggle))));
+            light.Right.Add(BuildSection(y => AddToggles(light, "Characters", y,
+                Row("Character moves", "Level-up moves swap among characters of the same attack type.", movesToggle, "NEW"),
+                Row("Character finishers", "Finishers swap among characters of the same attack type.", characterFinishersToggle, "NEW"))));
+            light.Toggles.AddRange(new[] { itemsToggle, shopsToggle, visionsToggle, enemiesToggle, bossesToggle });
+
+            OptionTab become = AddTab("We must BECOME Chaos");
+            become.Wide.Add(BuildSection(y => AddNote("Wilder, still finishable. Builds stop making sense, but nothing is " +
+                "taken away for good.", y)));
+            become.Left.Add(BuildSection(y => AddToggles(become, "Visions and characters", y,
+                Row("Mix Physical and Magic", "Vision abilities come from all 26 Visions.", mixToggle),
+                Row("Mix character moves", "Moves and finishers swap across Physical and Magic characters.", mixCharactersToggle, "NEW"),
+                Row("Random character stats", "Five main stats trade growth curves per character. HP and MP stay.", statsToggle, "NEW"))));
+            become.Left.Add(BuildSection(y => AddToggles(become, "Gear", y,
+                Row("Gear stats", "Weapon and armor stats shuffle within each gear type.", null, "LATER"),
+                Row("Gear passives", "Passives on gear come from other gear.", null, "LATER"))));
+            become.Right.Add(BuildSection(y => AddToggles(become, "Enemies", y,
+                Row("Enemy weaknesses", "Each enemy gets new elemental weaknesses.", null, "LATER"),
+                Row("Status resistances", "Enemies resist different ailments.", null, "LATER"),
+                Row("Enemy passives", "Enemy passives come from other enemies.", null, "LATER"),
+                Row("Encounter rate", "Normal, half or double random battles.", null, "LATER"))));
+
+            OptionTab chaos = AddTab("We are Chaos");
+            chaos.Wide.Add(BuildSection(y => AddNote("No guard rails. All off by default.", y)));
+            chaos.Wide.Add(BuildSection(BuildChaosWarning));
+            chaos.Left.Add(BuildSection(y => AddToggles(chaos, "Characters and gear", y,
+                Row("Fully random stats", "Any character can end up with any stats, no budget.", null, "LATER"),
+                Row("Equip anything", "Every character can wear every weapon and armor type.", null, "LATER"))));
+            chaos.Left.Add(BuildSection(y => AddToggles(chaos, "Enemies", y,
+                Row("Enemies at full strength", "Swapped enemies and bosses keep their own stats.", null, "LATER"))));
+            chaos.Right.Add(BuildSection(y => AddToggles(chaos, "Items and shops", y,
+                Row("Shops sell anything", "Any item can turn up in any shop, at its game price.", null, "LATER"),
+                Row("Story items in the shuffle", "Key and quest items move too. Can softlock the story.", null, "LATER"))));
+
+            abilitiesToggle.Changed += delegate { UpdateOptions(); };
+            movesToggle.Changed += delegate { UpdateOptions(); };
+            characterFinishersToggle.Changed += delegate { UpdateOptions(); };
+        }
+
+        OptionTab AddTab(string name)
+        {
+            OptionTab tab = new OptionTab();
+            tab.Button.Text = name;
+            tab.Button.AccessibleName = name;
+            tab.Button.Click += delegate { SelectTab(tab); };
+            tabs.Add(tab);
+            return tab;
+        }
+
+        // The tab buttons sit along the bottom of the strip, over a dividing line.
+        void BuildStrip()
+        {
+            strip.BackColor = Theme.Ground;
+            strip.Size = new Size(ContentWidth + 2 * Pad, StripHeight);
+            foreach (OptionTab tab in tabs)
             {
-                Stretch(control, control.Top >= footerTop ? AnchorStyles.Bottom : AnchorStyles.Top);
+                strip.Controls.Add(tab.Button);
             }
-            body.AutoScroll = true;
-            body.BackColor = Theme.Ground;
-            body.Location = new Point(0, HeaderHeight + 1);
-            body.Size = new Size(ClientSize.Width, footerTop - HeaderHeight - 1);
-            body.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            foreach (Panel section in sections)
+            strip.Paint += delegate(object sender, PaintEventArgs e)
             {
-                body.Controls.Add(section);
-            }
-            // Laid out after the resize finishes: moving the sections while the
-            // window is mid-resize leaves the body's scroll area at its old size.
-            body.Resize += delegate
-            {
-                if (!body.IsHandleCreated)
+                using (Pen line = new Pen(Theme.Border))
                 {
-                    LayOutSections();
-                }
-                else if (!layoutQueued)
-                {
-                    layoutQueued = true;
-                    body.BeginInvoke(new MethodInvoker(delegate { layoutQueued = false; LayOutSections(); }));
+                    e.Graphics.DrawLine(line, 0, strip.Height - 1, strip.Width, strip.Height - 1);
                 }
             };
-            Controls.Add(body);
+            Controls.Add(strip);
+        }
+
+        void SelectTab(OptionTab tab)
+        {
+            if (current != null)
+            {
+                foreach (Panel section in current.Sections)
+                {
+                    section.Visible = false;
+                }
+            }
+            current = tab;
+            foreach (OptionTab other in tabs)
+            {
+                other.Button.Selected = other == tab;
+            }
+            body.AutoScrollPosition = Point.Empty;
+            foreach (Panel section in tab.Sections)
+            {
+                section.Visible = true;
+            }
+            LayOut();
         }
 
         // One section of settings in its own panel, laid out at the design
@@ -495,54 +723,126 @@ namespace FFRRandomizerGui
             return panel;
         }
 
-        // Two columns when the window is wide enough for both at their design
-        // width, otherwise one. Sections stretch to the column width, and the
-        // window can't grow taller than the columns need.
-        void LayOutSections()
+        protected override void OnResize(EventArgs e)
         {
-            if (layingOut || sections.Count == 0)
+            base.OnResize(e);
+            QueueLayOut();
+        }
+
+        // Laid out after the resize finishes: moving the sections while the
+        // window is mid-resize leaves the body's scroll area at its old size.
+        void QueueLayOut()
+        {
+            if (!IsHandleCreated)
+            {
+                LayOut();
+            }
+            else if (!layoutQueued)
+            {
+                layoutQueued = true;
+                BeginInvoke(new MethodInvoker(delegate { layoutQueued = false; LayOut(); }));
+            }
+        }
+
+        // Two columns when the window is wide enough, otherwise one: the game
+        // folder and seed side by side or stacked, then the tab strip, then the
+        // current tab's options, which stretch to the column width. The window
+        // can't grow taller than the tallest tab needs.
+        void LayOut()
+        {
+            if (layingOut || current == null || folderSection == null)
             {
                 return;
             }
             layingOut = true;
-            float s = body.Top / (float)(HeaderHeight + 1);
+            // The Create button is built 48 px tall, so it gives the scale.
+            float s = createButton.Height / 48f;
             int pad = (int)Math.Round(Pad * s);
-            int columns = body.Width >= (int)(TwoColumnWidth * s) ? 2 : 1;
+            int width = ClientSize.Width;
+            int columns = width >= (int)(TwoColumnWidth * s) ? 2 : 1;
+            int column = (width - pad * (columns + 1)) / columns;
+            int y = (int)Math.Round((HeaderHeight + 1 + TopGap) * s);
+            if (columns == 2)
+            {
+                folderSection.SetBounds(0, y, column + 2 * pad, folderSection.Height);
+                seedSection.SetBounds(column + pad, y, column + 2 * pad, seedSection.Height);
+                y += Math.Max(folderSection.Height, seedSection.Height);
+            }
+            else
+            {
+                folderSection.SetBounds(0, y, width, folderSection.Height);
+                y += folderSection.Height;
+                seedSection.SetBounds(0, y, width, seedSection.Height);
+                y += seedSection.Height;
+            }
+            strip.SetBounds(0, y, width, strip.Height);
+            LayOutTabButtons(s, pad, width);
+            y += strip.Height;
+            int footerTop = ClientSize.Height - (int)Math.Round(FooterHeight * s);
+            body.SetBounds(0, y, width, Math.Max(0, footerTop - y));
+
             int top = (int)Math.Round(ContentTop * s);
             int bottom = (int)Math.Round(ContentBottom * s);
-            int[] bottoms = { top, top };
-            for (int i = 0; i < sections.Count; i++)
-            {
-                bottoms[columns == 2 && i >= SplitAt ? 1 : 0] += sections[i].Height;
-            }
-            // Leave room for the scroll bar whenever the columns don't fit, so
-            // the sections never need a sideways one.
-            int available = body.Width;
-            if (Math.Max(bottoms[0], bottoms[1]) + bottom > body.Height)
+            // Leave room for the scroll bar whenever the options don't fit, so
+            // they never need a sideways one.
+            int available = width;
+            if (top + current.ContentHeight(columns) + bottom > body.Height)
             {
                 available -= SystemInformation.VerticalScrollBarWidth;
             }
-            int width = (available - pad * (columns + 1)) / columns;
+            int inner = (available - pad * (columns + 1)) / columns;
             // Resuming layout afterwards makes the body measure its scroll area again.
             body.SuspendLayout();
             body.AutoScrollMargin = new Size(0, bottom);
-            int[] tops = { top, top };
-            for (int i = 0; i < sections.Count; i++)
+            int scroll = body.AutoScrollPosition.Y;
+            int at = top;
+            foreach (Panel section in current.Wide)
             {
-                int column = columns == 2 && i >= SplitAt ? 1 : 0;
-                Panel section = sections[i];
-                section.SetBounds(column * (width + pad), tops[column] + body.AutoScrollPosition.Y,
-                    width + 2 * pad, section.Height);
-                tops[column] += section.Height;
+                section.SetBounds(0, at + scroll, available, section.Height);
+                at += section.Height;
+            }
+            int[] tops = { at, at };
+            foreach (Panel section in current.Left)
+            {
+                section.SetBounds(0, tops[0] + scroll, inner + 2 * pad, section.Height);
+                tops[0] += section.Height;
+            }
+            int right = columns == 2 ? 1 : 0;
+            foreach (Panel section in current.Right)
+            {
+                section.SetBounds(right * (inner + pad), tops[right] + scroll, inner + 2 * pad, section.Height);
+                tops[right] += section.Height;
             }
             body.ResumeLayout(true);
             if (loaded)
             {
-                int needed = body.Top + Math.Max(bottoms[0], bottoms[1]) + (int)Math.Round((ContentBottom + FooterHeight) * s)
-                    + Height - ClientSize.Height;
+                int tallest = 0;
+                foreach (OptionTab tab in tabs)
+                {
+                    tallest = Math.Max(tallest, tab.ContentHeight(columns));
+                }
+                int needed = body.Top + top + tallest + bottom + (int)Math.Round(FooterHeight * s) + Height - ClientSize.Height;
                 MaximumSize = new Size(MaximumSize.Width, Math.Max(needed, MinimumSize.Height));
             }
             layingOut = false;
+        }
+
+        static readonly int[] TabWidths = { 220, 280, 190 };
+
+        void LayOutTabButtons(float s, int pad, int width)
+        {
+            int gap = (int)Math.Round(4 * s);
+            int height = (int)Math.Round(44 * s);
+            float total = 0;
+            foreach (int w in TabWidths) total += w * s;
+            float fit = Math.Min(1f, (width - 2 * pad - gap * (tabs.Count - 1)) / total);
+            int x = pad;
+            for (int i = 0; i < tabs.Count; i++)
+            {
+                int w = (int)(TabWidths[i] * s * fit);
+                tabs[i].Button.SetBounds(x, strip.Height - height, w, height);
+                x += w + gap;
+            }
         }
 
         // Controls that start at the left margin widen with the window, and
@@ -564,11 +864,11 @@ namespace FFRRandomizerGui
             }
         }
 
-        // Opens with two columns, sized to show every setting, or one column on
+        // Opens with two columns, sized to show every option, or one column on
         // a screen too narrow for two. On a screen too short, it opens at 90% of
-        // the height and the settings scroll. The window can be dragged wider,
-        // narrower down to one column, or shorter down to the header, footer and
-        // a few rows of settings, but not taller than the columns need.
+        // the height and the options scroll. The window can be dragged wider,
+        // narrower down to one column, or shorter down to the header, the
+        // folder and seed, the tabs, a few rows and the footer.
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
@@ -581,11 +881,11 @@ namespace FFRRandomizerGui
             {
                 Width = narrow;
             }
-            int shortest = (int)Math.Round((HeaderHeight + FooterHeight + 240) * s) + frameHeight;
+            int shortest = (int)Math.Round((HeaderHeight + TopGap + 104 + StripHeight + 160 + FooterHeight) * s) + frameHeight;
             MinimumSize = new Size(narrow, Math.Min(shortest, area.Height));
             MaximumSize = new Size((int)Math.Round(TwoColumnWidth * s * 1.4f) + frameWidth, SystemInformation.MaxWindowTrackSize.Height);
             loaded = true;
-            LayOutSections();
+            LayOut();
             int fit = area.Height * 9 / 10;
             if (Height > fit)
             {
@@ -678,7 +978,7 @@ namespace FFRRandomizerGui
         void BuildHeader()
         {
             AddLabel("FFR Randomizer", 48, 14, 300, Theme.Ui(12.5f, FontStyle.Bold), Theme.Text);
-            Label version = AddLabel("v0.4.1", 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
+            Label version = AddLabel("v0.5.0", 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
             version.TextAlign = ContentAlignment.TopRight;
         }
 
@@ -716,31 +1016,101 @@ namespace FFRRandomizerGui
         int BuildShuffles(int y)
         {
             Card card = AddToggleCard("Shuffles", y, 5);
-            AddShuffleRow(card, 0, "Items", "Chests, enemy drops and steals. Key items stay put.", itemsToggle);
-            AddShuffleRow(card, 1, "Shops", "Same categories and game prices, new stock.", shopsToggle);
-            AddShuffleRow(card, 2, "Visions", "All 26 Vision rewards trade places.", visionsToggle);
-            AddShuffleRow(card, 3, "Enemies", "Random encounters swap. Each spot keeps its stats and rewards.", enemiesToggle);
-            AddShuffleRow(card, 4, "Bosses", "Boss fights swap. Each fight keeps its stats and rewards.", bossesToggle);
+            AddShuffleRow(card, 0, "Items", "Chests, enemy drops and steals. Key items stay put.", itemsToggle, null);
+            AddShuffleRow(card, 1, "Shops", "Same categories and game prices, new stock.", shopsToggle, null);
+            AddShuffleRow(card, 2, "Visions", "All 26 Vision rewards trade places.", visionsToggle, null);
+            AddShuffleRow(card, 3, "Enemies", "Random encounters swap. Each spot keeps its stats and rewards.", enemiesToggle, null);
+            AddShuffleRow(card, 4, "Bosses", "Boss fights swap. Each fight keeps its stats and rewards.", bossesToggle, null);
             return y + 22 + 5 * 64 + 20;
         }
 
-        // Mixing and supports only apply to the ability shuffle, so they grey
-        // out while it's off. Finishers shuffle on their own.
-        int BuildAbilities(int y)
+        // One switch row: no toggle and a LATER badge means a placeholder for an
+        // option that isn't built yet.
+        class ToggleRow
         {
-            Card card = AddToggleCard("Vision abilities", y, 4);
-            AddShuffleRow(card, 0, "Abilities", "Abilities and passives swap. Each Vision keeps its counts.", abilitiesToggle);
-            AddShuffleRow(card, 1, "Mix Physical and Magic", "Physical and Magic Visions share one ability pool.", mixToggle);
-            AddShuffleRow(card, 2, "Supports stay supports", "Leah, Ayaka and Y\u2019shtola keep 5 or more healing abilities.", supportsToggle);
-            AddShuffleRow(card, 3, "Finishers", "The 26 finishers trade places.", finishersToggle);
-            abilitiesToggle.Changed += delegate { UpdateAbilityOptions(); };
-            return y + 22 + 4 * 64 + 20;
+            public string Title, Detail, Badge;
+            public ToggleSwitch Toggle;
         }
 
-        void UpdateAbilityOptions()
+        static ToggleRow Row(string title, string detail, ToggleSwitch toggle, string badge = null)
+        {
+            return new ToggleRow { Title = title, Detail = detail, Toggle = toggle, Badge = badge };
+        }
+
+        int AddToggles(OptionTab tab, string heading, int y, params ToggleRow[] rows)
+        {
+            Card card = AddToggleCard(heading, y, rows.Length);
+            for (int i = 0; i < rows.Length; i++)
+            {
+                ToggleSwitch toggle = rows[i].Toggle ?? new ToggleSwitch();
+                if (rows[i].Toggle == null)
+                {
+                    toggle.On = false;
+                    toggle.Enabled = false;
+                    laterToggles.Add(toggle);
+                }
+                else
+                {
+                    tab.Toggles.Add(toggle);
+                }
+                AddShuffleRow(card, i, rows[i].Title, rows[i].Detail, toggle, rows[i].Badge);
+            }
+            return y + 22 + rows.Length * 64 + 20;
+        }
+
+        // A line about the tab, room for two lines when the window is narrow.
+        int AddNote(string text, int y)
+        {
+            Label note = AddLabel(text, Pad, y, ContentWidth, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
+            note.Height = 38;
+            return y + 44;
+        }
+
+        int BuildChaosWarning(int y)
+        {
+            Card card = new Card();
+            card.Outline = ColorTranslator.FromHtml("#6b3a40");
+            card.BackColor = ColorTranslator.FromHtml("#2a1a1d");
+            card.Location = new Point(Pad, y);
+            card.Size = new Size(ContentWidth, 44);
+            Label text = new Label();
+            text.Text = "These can make a run unwinnable or break the story. Create Randomizer File asks you to confirm when any is on.";
+            text.Font = Theme.Ui(9.5f, FontStyle.Regular);
+            text.ForeColor = ColorTranslator.FromHtml("#f2c4c4");
+            text.BackColor = card.BackColor;
+            text.Location = new Point(12, 4);
+            text.Size = new Size(ContentWidth - 24, 36);
+            text.TextAlign = ContentAlignment.MiddleLeft;
+            text.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            card.Controls.Add(text);
+            target.Controls.Add(card);
+            return y + 56;
+        }
+
+        // Vision mixing needs the ability shuffle, character mixing needs moves
+        // or finishers, and supports needs either ability or move shuffle.
+        void UpdateOptions()
         {
             mixToggle.Enabled = abilitiesToggle.On;
-            supportsToggle.Enabled = abilitiesToggle.On;
+            supportsToggle.Enabled = abilitiesToggle.On || movesToggle.On;
+            mixCharactersToggle.Enabled = movesToggle.On || characterFinishersToggle.On;
+            UpdateCounts();
+        }
+
+        void UpdateCounts()
+        {
+            foreach (OptionTab tab in tabs)
+            {
+                int on = 0;
+                foreach (ToggleSwitch toggle in tab.Toggles)
+                {
+                    if (toggle.On && toggle.Enabled)
+                    {
+                        on++;
+                    }
+                }
+                tab.Button.Count = on > 0 ? on + " on" : "all off";
+            }
         }
 
         // A rounded card of 64 px rows with lines between them, under a heading.
@@ -766,13 +1136,17 @@ namespace FFRRandomizerGui
             return card;
         }
 
-        void AddShuffleRow(Card card, int index, string title, string detail, ToggleSwitch toggle)
+        // Badges sit after the title: NEW in the accent color, LATER greyed with
+        // the title and switch. The title is measured at the screen's scale and
+        // brought back to design units, since the form scales everything after.
+        void AddShuffleRow(Card card, int index, string title, string detail, ToggleSwitch toggle, string badge)
         {
+            bool later = badge == "LATER";
             int top = index * 64;
             Label name = new Label();
             name.Text = title;
             name.Font = Theme.Ui(11f, FontStyle.Bold);
-            name.ForeColor = Theme.Text;
+            name.ForeColor = later ? Theme.Muted : Theme.Text;
             name.Location = new Point(14, top + 10);
             name.Size = new Size(400, 22);
             Label info = new Label();
@@ -785,7 +1159,27 @@ namespace FFRRandomizerGui
             toggle.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             name.Anchor = info.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             toggle.AccessibleName = title;
-            toggle.Changed += delegate { ClearSaved(); };
+            if (!later)
+            {
+                toggle.Changed += delegate { ClearSaved(); UpdateCounts(); };
+            }
+            if (badge != null)
+            {
+                float scale = DeviceDpi / 96f;
+                Label tag = new Label();
+                tag.Text = badge;
+                tag.Font = Theme.Ui(7.5f, FontStyle.Bold);
+                tag.ForeColor = later ? ColorTranslator.FromHtml("#c9cfda") : Theme.AccentText;
+                tag.BackColor = later ? Theme.Border : Theme.Accent;
+                tag.TextAlign = ContentAlignment.MiddleCenter;
+                int titleWidth = (int)(TextRenderer.MeasureText(title, name.Font).Width / scale);
+                int tagWidth = (int)(TextRenderer.MeasureText(badge, tag.Font).Width / scale) + 6;
+                tag.SetBounds(14 + titleWidth + 4, top + 12, tagWidth, 18);
+                tag.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+                card.Controls.Add(tag);
+                name.Width = titleWidth + 2;
+                name.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            }
             card.Controls.Add(name);
             card.Controls.Add(info);
             card.Controls.Add(toggle);
@@ -842,14 +1236,6 @@ namespace FFRRandomizerGui
             {
                 quantityButtons[i].SetBounds(gap + i * (width + gap), gap, width, quantityButtons[i].Height);
             }
-        }
-
-        int BuildComingLater(int y)
-        {
-            AddHeading("Coming later", y);
-            AddLabel("Gear options", Pad, y + 22, ContentWidth,
-                Theme.Ui(10f, FontStyle.Regular), Theme.Muted);
-            return y + 50;
         }
 
         void BuildFooter()
@@ -977,7 +1363,11 @@ namespace FFRRandomizerGui
             mixToggle.On = Flag(values, "mix_physical_magic", false);
             supportsToggle.On = Flag(values, "supports", false);
             finishersToggle.On = Flag(values, "finishers", false);
-            UpdateAbilityOptions();
+            movesToggle.On = Flag(values, "character_moves", false);
+            characterFinishersToggle.On = Flag(values, "character_finishers", false);
+            mixCharactersToggle.On = Flag(values, "mix_character_moves", false);
+            statsToggle.On = Flag(values, "character_stats", false);
+            UpdateOptions();
             string quantity;
             int index = values.TryGetValue("chest_quantity", out quantity) ? Array.IndexOf(quantityValues, quantity.ToLowerInvariant()) : 0;
             quantityButtons[index < 0 ? 0 : index].Checked = true;
@@ -1033,6 +1423,22 @@ namespace FFRRandomizerGui
                 ShowSaved("Install UE4SS and the randomizer mod first, then pick the game folder.", false);
                 return;
             }
+            List<string> chaos = new List<string>();
+            foreach (ToggleSwitch toggle in tabs[2].Toggles)
+            {
+                if (toggle.On && toggle.Enabled)
+                {
+                    chaos.Add(toggle.AccessibleName);
+                }
+            }
+            if (chaos.Count > 0 && MessageBox.Show(this,
+                    "These options can make the game unwinnable or stop the story. There's no fixing that mid-run, " +
+                    "only a new Randomizer File and a New Game.\n\nOn in this file: " + string.Join(", ", chaos.ToArray()),
+                    "Create a We are Chaos run?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            {
+                return;
+            }
             string seed = seedBox.Text.Trim();
             if (seed == "")
             {
@@ -1042,7 +1448,8 @@ namespace FFRRandomizerGui
             try
             {
                 Game.WriteSettings(gameDir, seed, itemsToggle.On, shopsToggle.On, visionsToggle.On, enemiesToggle.On, bossesToggle.On,
-                    abilitiesToggle.On, mixToggle.On, finishersToggle.On, supportsToggle.On, SelectedQuantity());
+                    abilitiesToggle.On, mixToggle.On, finishersToggle.On, supportsToggle.On,
+                    movesToggle.On, characterFinishersToggle.On, mixCharactersToggle.On, statsToggle.On, SelectedQuantity());
                 GuiConfig.SaveGameDir(gameDir);
                 ShowSaved("Randomizer File saved. Start the game and begin a New Game. Keep this file for the whole playthrough.", true);
             }

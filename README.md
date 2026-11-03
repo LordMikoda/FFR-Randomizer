@@ -2,7 +2,7 @@
 
 # FFR Randomizer
 
-A seeded randomizer for **Final Fantasy Resonance** on PC. It shuffles chests, enemy drops, steals, shop stock and all 26 Visions. Share a seed and a friend gets the same run.
+A seeded randomizer for **Final Fantasy Resonance** on PC. It shuffles chests, enemy drops, steals, shop stock, all 26 Visions, the enemies in random encounters and the bosses. Share a seed and a friend gets the same run.
 
 It's a UE4SS Lua mod that changes the game's tables in memory while the game runs. No game files are changed, and removing the mod undoes it.
 
@@ -13,9 +13,9 @@ It's a UE4SS Lua mod that changes the game's tables in memory while the game run
 - **Chest quantity:** keep each chest's own count, or roll 1 to 9 or 1 to 50. Weapons, armor and accessories always stay at 1.
 - **Shops:** every shop keeps its categories and sells random items at the game's own prices. Quest items never show up in shops.
 - **Visions:** all 26 Visions swap among their rewards, including Sanctum, subquest and story Visions.
+- **Enemies (experimental, off by default):** random encounter enemies swap one-for-one with enemies of the same size, taking the level, HP, stats, EXP, Gil, drops and steals of the one they replace.
+- **Bosses (experimental, off by default):** boss fights swap bosses. The new boss keeps its own abilities and takes the replaced boss's stats and rewards. Lose-on-purpose and multi-phase fights stay put.
 - **Spoiler log:** a text file listing where everything went.
-
-In development on `main`, off by default: an enemy randomizer for random encounters and a boss randomizer. Both give the new enemy or boss the stats, EXP and Gil of the one it replaced.
 
 ## Install
 1. Install [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) for the game (a build that supports Unreal Engine 5.6).
@@ -39,7 +39,7 @@ Copy `mod/FFRRandomizer` into `FINAL FANTASY RESONANCE\FFRS\Binaries\Win64\ue4ss
 
 Build a release:
 ```
-powershell -ExecutionPolicy Bypass -File tools/make_release.ps1 -Version 0.1.1
+powershell -ExecutionPolicy Bypass -File tools/make_release.ps1 -Version 0.3.0
 ```
 
 ## License

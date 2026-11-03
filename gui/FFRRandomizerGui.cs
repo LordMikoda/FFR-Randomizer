@@ -16,7 +16,7 @@ using Microsoft.Win32;
 
 [assembly: System.Reflection.AssemblyTitle("FFR Randomizer")]
 [assembly: System.Reflection.AssemblyProduct("FFR Randomizer")]
-[assembly: System.Reflection.AssemblyVersion("0.1.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.3.0.0")]
 
 namespace FFRRandomizerGui
 {
@@ -60,8 +60,10 @@ namespace FFRRandomizerGui
             "items={1}\n" +
             "shops={2}\n" +
             "visions={3}\n" +
+            "enemies={4}\n" +
+            "bosses={5}\n" +
             "# default, 9 or 50. Weapons, armor and accessories always stay at 1.\n" +
-            "chest_quantity={4}\n";
+            "chest_quantity={6}\n";
 
         public static string ModDir(string gameDir)
         {
@@ -162,9 +164,9 @@ namespace FFRRandomizerGui
             return values;
         }
 
-        public static void WriteSettings(string gameDir, string seed, bool items, bool shops, bool visions, string quantity)
+        public static void WriteSettings(string gameDir, string seed, bool items, bool shops, bool visions, bool enemies, bool bosses, string quantity)
         {
-            string text = string.Format(Template, seed, OnOff(items), OnOff(shops), OnOff(visions), quantity);
+            string text = string.Format(Template, seed, OnOff(items), OnOff(shops), OnOff(visions), OnOff(enemies), OnOff(bosses), quantity);
             File.WriteAllText(SettingsFile(gameDir), text, new UTF8Encoding(false));
         }
 
@@ -352,6 +354,8 @@ namespace FFRRandomizerGui
         readonly ToggleSwitch itemsToggle = new ToggleSwitch();
         readonly ToggleSwitch shopsToggle = new ToggleSwitch();
         readonly ToggleSwitch visionsToggle = new ToggleSwitch();
+        readonly ToggleSwitch enemiesToggle = new ToggleSwitch();
+        readonly ToggleSwitch bossesToggle = new ToggleSwitch();
         readonly RadioButton[] quantityButtons = new RadioButton[3];
         readonly string[] quantityValues = { "default", "9", "50" };
         readonly Label quantityHelp = new Label();
@@ -372,7 +376,7 @@ namespace FFRRandomizerGui
             BackColor = Theme.Ground;
             ForeColor = Theme.Text;
             Font = Theme.Ui(10f, FontStyle.Regular);
-            ClientSize = new Size(560, 808);
+            ClientSize = new Size(560, 936);
             using (Stream icon = typeof(MainForm).Assembly.GetManifestResourceStream("FFRRandomizerGui.icon.ico"))
             {
                 if (icon != null)
@@ -403,7 +407,7 @@ namespace FFRRandomizerGui
             using (Pen line = new Pen(Theme.Border))
             {
                 g.DrawLine(line, 0, 52 * s, ClientSize.Width, 52 * s);
-                g.DrawLine(line, 0, 684 * s, ClientSize.Width, 684 * s);
+                g.DrawLine(line, 0, 812 * s, ClientSize.Width, 812 * s);
             }
             // Crystal mark beside the title.
             using (Pen pen = new Pen(Theme.Accent, 1.8f * s))
@@ -475,7 +479,7 @@ namespace FFRRandomizerGui
         void BuildHeader()
         {
             AddLabel("FFR Randomizer", 48, 14, 300, Theme.Ui(12.5f, FontStyle.Bold), Theme.Text);
-            Label version = AddLabel("v0.1.1", 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
+            Label version = AddLabel("v0.3.0", 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
             version.TextAlign = ContentAlignment.TopRight;
         }
 
@@ -516,21 +520,25 @@ namespace FFRRandomizerGui
             Card card = new Card();
             card.Radius = 10;
             card.Location = new Point(Pad, y + 22);
-            card.Size = new Size(ContentWidth, 3 * 64);
+            card.Size = new Size(ContentWidth, 5 * 64);
             Controls.Add(card);
             AddShuffleRow(card, 0, "Items", "Chests, enemy drops and steals. Key items stay put.", itemsToggle);
             AddShuffleRow(card, 1, "Shops", "Same categories and game prices, new stock.", shopsToggle);
             AddShuffleRow(card, 2, "Visions", "All 26 Vision rewards trade places.", visionsToggle);
+            AddShuffleRow(card, 3, "Enemies", "Random encounters swap. Each spot keeps its stats and rewards.", enemiesToggle);
+            AddShuffleRow(card, 4, "Bosses", "Boss fights swap. Each fight keeps its stats and rewards.", bossesToggle);
             card.Paint += delegate(object sender, PaintEventArgs e)
             {
                 using (Pen pen = new Pen(Theme.Border))
                 {
                     float s = DeviceDpi / 96f;
-                    e.Graphics.DrawLine(pen, 0, 64 * s, card.Width - 1, 64 * s);
-                    e.Graphics.DrawLine(pen, 0, 128 * s, card.Width - 1, 128 * s);
+                    for (int row = 1; row < 5; row++)
+                    {
+                        e.Graphics.DrawLine(pen, 0, row * 64 * s, card.Width - 1, row * 64 * s);
+                    }
                 }
             };
-            return y + 22 + 3 * 64 + 20;
+            return y + 22 + 5 * 64 + 20;
         }
 
         void AddShuffleRow(Card card, int index, string title, string detail, ToggleSwitch toggle)
@@ -596,7 +604,7 @@ namespace FFRRandomizerGui
         void BuildComingLater(int y)
         {
             AddHeading("Coming later", y);
-            AddLabel("Enemies, bosses, EXP and Gil balance, gear options", Pad, y + 22, ContentWidth,
+            AddLabel("Gear options", Pad, y + 22, ContentWidth,
                 Theme.Ui(10f, FontStyle.Regular), Theme.Muted);
         }
 
@@ -604,7 +612,7 @@ namespace FFRRandomizerGui
         {
             savedCard.Outline = Theme.GoodBorder;
             savedCard.BackColor = Theme.GoodBack;
-            savedCard.Location = new Point(Pad, 696);
+            savedCard.Location = new Point(Pad, 824);
             savedCard.Size = new Size(ContentWidth, 44);
             savedText.Location = new Point(12, 4);
             savedText.Size = new Size(ContentWidth - 24, 36);
@@ -616,7 +624,7 @@ namespace FFRRandomizerGui
             Controls.Add(savedCard);
 
             createButton.Text = "Create Randomizer File";
-            createButton.Location = new Point(Pad, 748);
+            createButton.Location = new Point(Pad, 876);
             createButton.Size = new Size(358, 48);
             createButton.FlatStyle = FlatStyle.Flat;
             createButton.FlatAppearance.BorderSize = 0;
@@ -629,7 +637,7 @@ namespace FFRRandomizerGui
             Controls.Add(createButton);
             AcceptButton = createButton;
 
-            Button spoiler = MakeButton("Open spoiler log", 388, 748, 152, 48);
+            Button spoiler = MakeButton("Open spoiler log", 388, 876, 152, 48);
             spoiler.BackColor = Theme.Ground;
             spoiler.Click += delegate { OpenSpoiler(); };
         }
@@ -716,9 +724,11 @@ namespace FFRRandomizerGui
             Dictionary<string, string> values = ModInstalled ? Game.ReadSettings(gameDir) : new Dictionary<string, string>();
             string seed;
             seedBox.Text = values.TryGetValue("seed", out seed) && seed != "" ? seed : NewSeed();
-            itemsToggle.On = Flag(values, "items");
-            shopsToggle.On = Flag(values, "shops");
-            visionsToggle.On = Flag(values, "visions");
+            itemsToggle.On = Flag(values, "items", true);
+            shopsToggle.On = Flag(values, "shops", true);
+            visionsToggle.On = Flag(values, "visions", true);
+            enemiesToggle.On = Flag(values, "enemies", false);
+            bossesToggle.On = Flag(values, "bosses", false);
             string quantity;
             int index = values.TryGetValue("chest_quantity", out quantity) ? Array.IndexOf(quantityValues, quantity.ToLowerInvariant()) : 0;
             quantityButtons[index < 0 ? 0 : index].Checked = true;
@@ -726,12 +736,12 @@ namespace FFRRandomizerGui
             ClearSaved();
         }
 
-        static bool Flag(Dictionary<string, string> values, string key)
+        static bool Flag(Dictionary<string, string> values, string key, bool fallback)
         {
             string value;
             if (!values.TryGetValue(key, out value))
             {
-                return true;
+                return fallback;
             }
             value = value.ToLowerInvariant();
             return value != "off" && value != "false" && value != "0";
@@ -782,7 +792,7 @@ namespace FFRRandomizerGui
             }
             try
             {
-                Game.WriteSettings(gameDir, seed, itemsToggle.On, shopsToggle.On, visionsToggle.On, SelectedQuantity());
+                Game.WriteSettings(gameDir, seed, itemsToggle.On, shopsToggle.On, visionsToggle.On, enemiesToggle.On, bossesToggle.On, SelectedQuantity());
                 GuiConfig.SaveGameDir(gameDir);
                 ShowSaved("Randomizer File saved. Start the game and begin a New Game. Keep this file for the whole playthrough.", true);
             }

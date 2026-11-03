@@ -3,7 +3,7 @@
 -- applies it in memory. Nothing on disk in the game changes, and removing this
 -- folder undoes everything.
 
-local MOD_VERSION = "0.1.1"
+local MOD_VERSION = "0.3.0"
 local LOG_PREFIX = "[FFRRandomizer] "
 local CHECK_INTERVAL_MS = 3000
 
@@ -20,13 +20,23 @@ if not hasNames or type(ITEM_NAMES) ~= "table" then
     ITEM_NAMES = {}
 end
 
+local hasGroups, ENCOUNTER_GROUPS = pcall(require, "EncounterGroups")
+if not hasGroups or type(ENCOUNTER_GROUPS) ~= "table" then
+    ENCOUNTER_GROUPS = nil
+end
+
 local TABLES = {
     chests = "/Game/Datatable/Map/Gimmick/TreasureBox/CDT_MapGimmickTreasureBox.CDT_MapGimmickTreasureBox",
     units = "/Game/Datatable/Unit/DT_UnitParameter.DT_UnitParameter",
     shops = "/Game/Datatable/Shop/DT_ShopList.DT_ShopList",
     events = "/Game/Datatable/Event/TalkEvent/CDT_TalkEventData_Prod.CDT_TalkEventData_Prod",
     questBoard = "/Game/Datatable/Quest/CDT_QuestBoardData.CDT_QuestBoardData",
+    battleGroups = "/Game/Datatable/Encount/DT_BattleGroup.DT_BattleGroup",
+    unitDesign = "/Game/Datatable/Battle/Unit/DT_BtlUnitDesignParameter.DT_BtlUnitDesignParameter",
 }
+-- Tables the plan can do without, and the ones only the enemy and boss shuffles need.
+local OPTIONAL_TABLES = { questBoard = true }
+local ENEMY_TABLES = { battleGroups = true, unitDesign = true }
 
 -- Only Consumable, Equipment and Seed items move. Valuables, Artifacts and
 -- Visions are key items or have their own rules, so they never leave their spot.
@@ -45,6 +55,35 @@ local DROP_CATEGORIES = { [2] = true, [3] = true }
 local UNIT_ITEM_FIELDS = { "DropNormalItem", "DropRareItem", "StealNormalItem", "StealRareItem" }
 local EQUIPMENT_TYPES = { [1] = "Weapon", [2] = "Armor", [3] = "Accessory" }
 
+-- What a swapped-in enemy takes over from the enemy it replaces, so a spot
+-- keeps its difficulty and rewards. Abilities, looks and resistances stay
+-- with the enemy itself.
+local ENEMY_SPOT_FIELDS = {
+    "Level", "LevelParamId", "HitPoint", "MagicPoint", "Breakpoint",
+    "MaxHitPoint", "MaxMagicPoint", "MaxBreakPoint",
+    "Attack", "Defence", "Intelligence", "Mind", "Divine", "Agility",
+    "Experience", "Money",
+    "DropNormalItem", "DropNormalItemRate", "DropRareItem", "DropRareItemRate",
+    "StealNormalItem", "StealRareItem", "StealItemRate",
+}
+local ENEMY_CATEGORY = 2
+local BOSS_CATEGORY = 3
+
+-- Boss fights that never swap, on top of the rules in shuffleBosses. The
+-- Twelve Arms fights run in chained phases, and Leviathan's and the Antlion's
+-- battle events are named for the monster, so they likely drive its mechanics.
+local function isFixedBossGroup(id)
+    return (id >= 9922 and id <= 9999) or id == 9021 or id == 9060
+end
+
+-- Developer test battles (groups 1 to 6, such as "1-enemy check", and the
+-- 300000 parts test) never run in play. They use Steel Bats and Goblins, so
+-- counting them as scripted fights would keep those enemies out of the shuffle.
+local function isDebugGroup(id)
+    return id < 100 or id >= 300000
+end
+local UNIT_SIZES = { [1] = "S", [2] = "M", [3] = "L", [4] = "LL", [5] = "XL" }
+
 local VISION_COUNT = 26
 local CHEST_CAPS = { default = false, ["9"] = 9, ["50"] = 50 }
 
@@ -58,6 +97,8 @@ seed=%s
 items=%s
 shops=%s
 visions=%s
+enemies=%s
+bosses=%s
 # default, 9 or 50. Weapons, armor and accessories always stay at 1.
 chest_quantity=%s
 ]]
@@ -74,7 +115,8 @@ local function writeSettings(settings)
     end
     local function onOff(value) return value and "on" or "off" end
     file:write(string.format(SETTINGS_TEMPLATE, settings.seed, onOff(settings.items),
-        onOff(settings.shops), onOff(settings.visions), settings.chestQuantity))
+        onOff(settings.shops), onOff(settings.visions), onOff(settings.enemies), onOff(settings.bosses),
+        settings.chestQuantity))
     file:close()
 end
 
@@ -91,16 +133,19 @@ local function readSettings()
         file:close()
     end
 
-    local function flag(key)
-        local value = (values[key] or "on"):lower()
+    local function flag(key, default)
+        local value = (values[key] or default):lower()
         return value ~= "off" and value ~= "false" and value ~= "0"
     end
 
+    -- enemies and bosses came later than the others, so a file without the line keeps them off.
     local settings = {
         seed = values.seed or "",
-        items = flag("items"),
-        shops = flag("shops"),
-        visions = flag("visions"),
+        items = flag("items", "on"),
+        shops = flag("shops", "on"),
+        visions = flag("visions", "on"),
+        enemies = flag("enemies", "off"),
+        bosses = flag("bosses", "off"),
         chestQuantity = (values.chest_quantity or "default"):lower(),
     }
     if CHEST_CAPS[settings.chestQuantity] == nil then
@@ -277,16 +322,24 @@ local function buildConsumed(events, questBoard)
 end
 
 -- Plan ----------------------------------------------------------------------
--- A patch sets one field: row[field], or row[array][index][field].
+-- A patch sets one field: row[field], row[array][index][field], or, with no
+-- field, the plain value row[array][index]. A later patch to the same spot
+-- replaces the earlier one, so two passes never fight over a field.
 
 local function newPlan()
-    return { patches = {}, spoiler = {} }
+    return { patches = {}, patchIndex = {}, spoiler = {}, unitItems = {} }
 end
 
 local function addPatch(plan, family, row, field, value, array, index)
-    table.insert(plan.patches, {
-        family = family, row = row, field = field, value = value, array = array, index = index,
-    })
+    local key = table.concat({ family, row, tostring(array), tostring(index), tostring(field) }, "|")
+    local existing = plan.patchIndex[key]
+    if existing ~= nil then
+        existing.value = value
+        return
+    end
+    local patch = { family = family, row = row, field = field, value = value, array = array, index = index }
+    plan.patchIndex[key] = patch
+    table.insert(plan.patches, patch)
 end
 
 local function addSpoiler(plan, section, line)
@@ -343,6 +396,10 @@ local function shufflePool(plan, settings, tables, catalog, consumed)
         if item ~= slot.original then
             addPatch(plan, slot.family, slot.row, slot.field, item)
             moved = moved + 1
+        end
+        if slot.family == "units" then
+            plan.unitItems[slot.row] = plan.unitItems[slot.row] or {}
+            plan.unitItems[slot.row][slot.field] = item
         end
         if slot.family == "chests" then
             local count
@@ -493,6 +550,205 @@ local function shuffleVisions(plan, settings, tables, catalog)
     log(string.format("Visions: %d rewards shuffled.", #slots))
 end
 
+-- The first unit row for each unit ID, its category and its size.
+local function readUnits(tables)
+    local rowOf, category = {}, {}
+    for _, name in ipairs(sortedRowNames(tables.units)) do
+        local row = tables.units:FindRow(name)
+        if rowOf[row.ID] == nil then
+            rowOf[row.ID] = name
+            category[row.ID] = row.Category
+        end
+    end
+    local sizeOf = {}
+    tables.unitDesign:ForEachRow(function(_, row)
+        sizeOf[row.ID] = row.Size
+    end)
+    return rowOf, category, sizeOf
+end
+
+-- The swapped-in unit's row takes the replaced unit's spot fields. Drops and
+-- steals come from the item shuffle when it moved them.
+local function moveSpot(plan, tables, rowOf, id, new)
+    local source = tables.units:FindRow(rowOf[id])
+    local items = plan.unitItems[rowOf[id]] or {}
+    for _, field in ipairs(ENEMY_SPOT_FIELDS) do
+        local value = items[field]
+        if value == nil then
+            value = source[field]
+        end
+        addPatch(plan, "units", rowOf[new], field, value)
+    end
+end
+
+-- One-for-one swap of random encounter enemies, within each size class. If A
+-- replaces B, every B in a random encounter becomes A, and A's row takes B's
+-- stats, rewards, drops and steals, so the spot plays and pays as before.
+-- Enemies that also fight in scripted battles stay out, because those
+-- battles would otherwise get the moved stats.
+local function shuffleEnemies(plan, settings, tables)
+    if ENCOUNTER_GROUPS == nil then
+        log("EncounterGroups.lua is missing. Enemies not shuffled.")
+        return
+    end
+
+    local rowOf, category, sizeOf = readUnits(tables)
+
+    local groups, inEncounters, inOtherFights = {}, {}, {}
+    for _, name in ipairs(sortedRowNames(tables.battleGroups)) do
+        local row = tables.battleGroups:FindRow(name)
+        if not isDebugGroup(row.ID) then
+            local ids = arrayItems(row.UnitIdList)
+            local random = ENCOUNTER_GROUPS[row.ID] == true
+            for _, id in ipairs(ids) do
+                if random then
+                    inEncounters[id] = true
+                else
+                    inOtherFights[id] = true
+                end
+            end
+            if random then
+                table.insert(groups, { row = name, ids = ids })
+            end
+        end
+    end
+
+    local buckets, bucketNames = {}, {}
+    local ids = {}
+    for id in pairs(inEncounters) do
+        if not inOtherFights[id] and rowOf[id] ~= nil and category[id] == ENEMY_CATEGORY then
+            table.insert(ids, id)
+        end
+    end
+    table.sort(ids)
+    for _, id in ipairs(ids) do
+        local size = UNIT_SIZES[sizeOf[id]] or "Unknown"
+        if buckets[size] == nil then
+            buckets[size] = {}
+            table.insert(bucketNames, size)
+        end
+        table.insert(buckets[size], id)
+    end
+
+    local rng = newRng(settings.seed, "enemies")
+    local replacement = {}
+    table.sort(bucketNames)
+    for _, size in ipairs(bucketNames) do
+        local from = buckets[size]
+        local to = { table.unpack(from) }
+        rng.shuffle(to)
+        for i, id in ipairs(from) do
+            replacement[id] = to[i]
+        end
+    end
+
+    for _, group in ipairs(groups) do
+        for i, id in ipairs(group.ids) do
+            local new = replacement[id]
+            if new ~= nil and new ~= id then
+                addPatch(plan, "battleGroups", group.row, nil, new, "UnitIdList", i)
+            end
+        end
+    end
+
+    local moved = 0
+    for _, id in ipairs(ids) do
+        local new = replacement[id]
+        if new ~= id then
+            moved = moved + 1
+            moveSpot(plan, tables, rowOf, id, new)
+        end
+        addSpoiler(plan, "Enemies", string.format("Unit %d %s fights in place of unit %d %s (size %s)",
+            new, rowOf[new], id, rowOf[id], UNIT_SIZES[sizeOf[id]] or "Unknown"))
+    end
+    log(string.format("Enemies: %d in random encounters, %d swapped.", #ids, moved))
+end
+
+-- An FName field that names something. Empty FNames read as "None".
+local function hasName(value)
+    if value == nil then
+        return false
+    end
+    local text = nameText(value)
+    return text ~= "" and text ~= "None"
+end
+
+-- One-for-one swap of bosses across boss fights, the same way as enemies: the
+-- new boss keeps its own abilities, looks and resistances, and takes the
+-- replaced boss's level, stats, EXP, Gil, drops and steals. Sizes aren't
+-- matched, since most size classes hold only a few bosses.
+-- A fight swaps only when it has exactly one boss, isn't a lose-on-purpose or
+-- scripted-result fight, has a finish event (later phases of a chained fight
+-- have none) and isn't on the fixed list. A boss that also appears in any
+-- other battle stays out, so that battle keeps its stats.
+local function shuffleBosses(plan, settings, tables)
+    local rowOf, category, sizeOf = readUnits(tables)
+
+    local fights, inFights, elsewhere = {}, {}, {}
+    for _, name in ipairs(sortedRowNames(tables.battleGroups)) do
+        local row = tables.battleGroups:FindRow(name)
+        if not isDebugGroup(row.ID) then
+            local ids = arrayItems(row.UnitIdList)
+            local bossSlots = {}
+            for i, id in ipairs(ids) do
+                if category[id] == BOSS_CATEGORY then
+                    table.insert(bossSlots, i)
+                end
+            end
+            local usable = #bossSlots == 1
+                and not (ENCOUNTER_GROUPS ~= nil and ENCOUNTER_GROUPS[row.ID])
+                and not isTrue(row.isResultSkipOnLose) and not isTrue(row.isResultSkipOnWin)
+                and hasName(row.battleFinishEventId)
+                and not isFixedBossGroup(row.ID)
+            for i, id in ipairs(ids) do
+                if usable and i == bossSlots[1] then
+                    inFights[id] = true
+                else
+                    elsewhere[id] = true
+                end
+            end
+            if usable then
+                table.insert(fights, { row = name, slot = bossSlots[1], id = ids[bossSlots[1]] })
+            end
+        end
+    end
+
+    local ids = {}
+    for id in pairs(inFights) do
+        if not elsewhere[id] and rowOf[id] ~= nil then
+            table.insert(ids, id)
+        end
+    end
+    table.sort(ids)
+
+    local rng = newRng(settings.seed, "bosses")
+    local to = { table.unpack(ids) }
+    rng.shuffle(to)
+    local replacement = {}
+    for i, id in ipairs(ids) do
+        replacement[id] = to[i]
+    end
+
+    for _, fight in ipairs(fights) do
+        local new = replacement[fight.id]
+        if new ~= nil and new ~= fight.id then
+            addPatch(plan, "battleGroups", fight.row, nil, new, "UnitIdList", fight.slot)
+        end
+    end
+
+    local moved = 0
+    for _, id in ipairs(ids) do
+        local new = replacement[id]
+        if new ~= id then
+            moved = moved + 1
+            moveSpot(plan, tables, rowOf, id, new)
+        end
+        addSpoiler(plan, "Bosses", string.format("Unit %d %s fights in place of unit %d %s (size %s to %s)",
+            new, rowOf[new], id, rowOf[id], UNIT_SIZES[sizeOf[new]] or "Unknown", UNIT_SIZES[sizeOf[id]] or "Unknown"))
+    end
+    log(string.format("Bosses: %d in boss fights, %d swapped.", #ids, moved))
+end
+
 local function writeSpoiler(plan, settings)
     local path = MOD_DIR .. "Spoiler_" .. settings.seed:gsub("[^%w_-]", "_") .. ".txt"
     local file = io.open(path, "w")
@@ -502,10 +758,14 @@ local function writeSpoiler(plan, settings)
     end
     local function onOff(value) return value and "on" or "off" end
     file:write("FFR Randomizer " .. MOD_VERSION .. " spoiler log\n")
-    file:write(string.format("Seed: %s\nItems: %s   Shops: %s   Visions: %s   Chest quantity: %s\n",
+    file:write(string.format("Seed: %s\nItems: %s   Shops: %s   Visions: %s   Enemies: %s   Bosses: %s   Chest quantity: %s\n",
         settings.seed, onOff(settings.items), onOff(settings.shops), onOff(settings.visions),
-        settings.chestQuantity))
-    for _, section in ipairs({ "Visions", "Chests", "Drops and steals", "Shops" }) do
+        onOff(settings.enemies), onOff(settings.bosses), settings.chestQuantity))
+    if settings.enemies or settings.bosses then
+        file:write("With enemies or bosses on, drops and steals stay with the spot: a unit's list below\n" ..
+            "goes to whichever unit fights in its place.\n")
+    end
+    for _, section in ipairs({ "Visions", "Bosses", "Enemies", "Chests", "Drops and steals", "Shops" }) do
         local lines = plan.spoiler[section]
         if lines ~= nil then
             file:write("\n== " .. section .. " ==\n")
@@ -520,7 +780,8 @@ local function buildPlan(settings)
     local tables = {}
     for key, path in pairs(TABLES) do
         tables[key] = findTable(path)
-        if tables[key] == nil and key ~= "questBoard" then
+        local needed = not OPTIONAL_TABLES[key] and (settings.enemies or settings.bosses or not ENEMY_TABLES[key])
+        if tables[key] == nil and needed then
             return nil, path
         end
     end
@@ -537,6 +798,12 @@ local function buildPlan(settings)
     end
     if settings.visions then
         shuffleVisions(plan, settings, tables, catalog)
+    end
+    if settings.enemies then
+        shuffleEnemies(plan, settings, tables)
+    end
+    if settings.bosses then
+        shuffleBosses(plan, settings, tables)
     end
     return plan
 end
@@ -568,14 +835,19 @@ local function buildIndex(plan)
 end
 
 local function applyPatch(row, patch)
-    local target = row
+    local target, key = row, patch.field
     if patch.array ~= nil then
-        target = row[patch.array][patch.index]
+        target = row[patch.array]
+        if key == nil then
+            key = patch.index
+        else
+            target = target[patch.index]
+        end
     end
-    if target[patch.field] == patch.value then
+    if target[key] == patch.value then
         return false
     end
-    target[patch.field] = patch.value
+    target[key] = patch.value
     return true
 end
 
@@ -602,8 +874,8 @@ local function applyPlan()
                 if row ~= nil then
                     local ok, result = pcall(applyPatch, row, patch)
                     if not ok then
-                        reportOnce(patch.family .. patch.row .. patch.field,
-                            "Failed on " .. patch.row .. "." .. patch.field .. ": " .. tostring(result))
+                        local where = patch.row .. "." .. tostring(patch.field or patch.array)
+                        reportOnce(patch.family .. where, "Failed on " .. where .. ": " .. tostring(result))
                     elseif result then
                         changed = changed + 1
                     end

@@ -66,7 +66,7 @@ local NEEDED_BY = {
 -- need, and the ones only the Vision ability shuffle needs.
 local OPTIONAL_TABLES = { questBoard = true }
 local ENEMY_TABLES = { battleGroups = true, unitDesign = true }
-local ABILITY_TABLES = { awakening = true, synchro = true, skills = true, passives = true }
+local ABILITY_TABLES = { awakening = true, synchro = true, passives = true }
 
 -- Each playable character's level table, keyed "level" .. its suffix, such as
 -- levelRain. Only the character shuffles need them.
@@ -1236,12 +1236,28 @@ local function shuffleCharacters(plan, settings, tables)
     local clashes = shuffleOwnedSlots(slots, groupOf, newRng(settings.seed, "characters"),
         settings.supports and settings.characterMoves, characterName)
 
+    local skillRow, ownerOf = {}, {}
+    if settings.characterFinishers then
+        for _, name in ipairs(sortedRowNames(tables.skills)) do
+            local id = tables.skills:FindRow(name).ID
+            skillRow[id] = skillRow[id] or name
+        end
+    end
+    for _, character in ipairs(CHARACTER_MOVES.characters) do
+        ownerOf[character.unit] = character.owner
+    end
+
     local changed = 0
     local learned = {}
     for _, slot in ipairs(slots) do
         if slot.value ~= slot.original then
             changed = changed + 1
             addPatch(plan, slot.family, slot.row, nil, slot.value, "AddSkills", slot.index)
+        end
+        -- The Limit Burst menu lists the finishers whose hasUnit is the
+        -- character, learned or not, so a moved finisher takes its new owner's.
+        if slot.kind == "finisher" and slot.value ~= slot.original and skillRow[slot.value] ~= nil then
+            addPatch(plan, "skills", skillRow[slot.value], "hasUnit", ownerOf[slot.owner])
         end
         learned[slot.owner] = learned[slot.owner] or {}
         table.insert(learned[slot.owner], slot)

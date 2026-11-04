@@ -4,7 +4,8 @@ FFR Randomizer
 Shuffles chests, enemy drops, steals, shop stock, all 26 Visions and their
 abilities, the characters' moves, finishers and stats, gear stats and
 passives, the enemies in random encounters, their weaknesses and passives,
-and the bosses in Final Fantasy Resonance, from a seed you can share. Runs in memory through UE4SS: no game files are changed, and removing
+the bosses and the music in Final Fantasy Resonance, from a seed you can
+share. Runs in memory through UE4SS: no game files are changed, and removing
 the mod undoes it.
 
 Install
@@ -27,6 +28,11 @@ enemies), Dark Knight Mode (every shuffle that keeps the game's rules) and
 True Chaos Mode (everything, may be unwinnable). The Rewards sliders on the
 first tab scale EXP, Gil and MRP from 0.25x to 10x; presets leave them be.
 
+Music, also on the first tab: Off keeps the game's own tracks, Shuffle
+swaps battle tracks among battles and field and town tracks among theirs,
+and Mixed puts them all in one pool. Every place a track played gets the
+same new one. Airship and chocobo music don't change.
+
 Keep the same Randomizer File for the whole playthrough. To change seeds,
 make a new file and restart the game.
 
@@ -35,7 +41,8 @@ Running Setup again updates the mod and keeps your Randomizer File.
 Sharing and checking a run
 --------------------------
 The settings code under the seed holds the seed and every option in one
-line, such as FFR2-0631G07ZQZ-49353958654. Codes from 0.7.0 (FFR1) still load. Copy sends it; Paste code loads a
+line, such as FFR2-0631G07ZQZ-49353958654. Codes from 0.7.0 (FFR1) and
+0.8.0 still load. Copy sends it; Paste code loads a
 friend's code, then Create Randomizer File saves it.
 
 After the game starts, the card above Create shows whether it applied your
@@ -43,8 +50,8 @@ file, how many changes it made and any errors, plus a seed check of four
 words. Two players with the same seed check have the same run. The card
 also says when the game is still on an older file and needs a restart.
 
-Enemies and bosses (experimental)
----------------------------------
+Enemies and bosses
+------------------
 Both are off by default; turn them on in the app. Random encounter enemies
 swap one-for-one with enemies of the same size, and bosses swap with other
 bosses. Each swapped-in enemy or boss keeps its own abilities and takes the
@@ -108,8 +115,8 @@ Spoiler log
 The game writes Spoiler_<seed>.txt into the FFRRandomizer mod folder the first
 time it starts with a seed. It lists where every item, shop slot and Vision
 went, which enemy and boss replaced which, each Vision's abilities and
-finisher, each character's moves and stats, and the gear and enemy changes. Open it from the app with
-Open spoiler log.
+finisher, each character's moves and stats, the gear and enemy changes,
+and which track replaced which. Open it from the app with Open spoiler log.
 
 Uninstall
 ---------

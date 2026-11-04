@@ -2,7 +2,7 @@
 
 # FFR Randomizer
 
-A seeded randomizer for **Final Fantasy Resonance** on PC. It shuffles chests, enemy drops, steals, shop stock, all 26 Visions and their abilities, the characters' moves, finishers and stats, gear stats and passives, enemy weaknesses and passives, the enemies in random encounters and the bosses. Share a seed and a friend gets the same run.
+A seeded randomizer for **Final Fantasy Resonance** on PC. It shuffles chests, enemy drops, steals, shop stock, all 26 Visions and their abilities, the characters' moves, finishers and stats, gear stats and passives, enemy weaknesses and passives, the enemies in random encounters, the bosses and the music. Share a seed and a friend gets the same run.
 
 It's a UE4SS Lua mod that changes the game's tables in memory while the game runs. No game files are changed, and removing the mod undoes it.
 
@@ -17,8 +17,9 @@ It's a UE4SS Lua mod that changes the game's tables in memory while the game run
 - **Characters (off by default):** level-up moves and finishers swap among characters of the same attack type (or across types), keeping counts and levels; each character's five main stats can trade growth curves, keeping totals.
 - **Gear and enemies (off by default):** gear stats and passives, enemy weaknesses, status resistances and passives, and the encounter rate.
 - **We are Chaos (off by default):** fully random stats, swapped weapon and armor types, enemies at full strength, shops that sell anything, and story items in the shuffle. These can make a run unwinnable.
-- **Enemies (experimental, off by default):** random encounter enemies swap one-for-one with enemies of the same size, taking the level, HP, stats, EXP, Gil, drops and steals of the one they replace.
-- **Bosses (experimental, off by default):** boss fights swap bosses. The new boss keeps its own abilities and takes the replaced boss's stats and rewards. Lose-on-purpose and multi-phase fights stay put.
+- **Enemies (off by default):** random encounter enemies swap one-for-one with enemies of the same size, taking the level, HP, stats, EXP, Gil, drops and steals of the one they replace.
+- **Bosses (off by default):** boss fights swap bosses. The new boss keeps its own abilities and takes the replaced boss's stats and rewards. Lose-on-purpose and multi-phase fights stay put.
+- **Music (off by default):** battle, field and town tracks swap, either within their own kind (Shuffle) or in one pool (Mixed). Airship and chocobo music don't change yet.
 - **Spoiler log:** a text file listing where everything went, with enemies and bosses by name.
 - **Presets:** WoL Mode, Dark Knight Mode and True Chaos Mode set every switch in one click.
 - **Reward sliders:** EXP, Gil and MRP from 0.25x to 10x.
@@ -32,7 +33,7 @@ It's a UE4SS Lua mod that changes the game's tables in memory while the game run
 Keep the same Randomizer File for the whole playthrough. Uninstall from Windows Settings > Apps > Installed apps.
 
 ### Manual install
-Copy `mod/FFRRandomizer` into `FINAL FANTASY RESONANCE\FFRS\Binaries\Win64\ue4ss\Mods\`. Without the app, the mod picks a seed on first launch and writes it to `Randomizer.txt` in that folder; edit that file to change the seed or options (`items`, `shops`, `visions`, `enemies`, `bosses`, `abilities`, `mix_physical_magic`, `finishers`, `supports`, `character_moves`, `character_finishers`, `mix_character_moves`, `character_stats`, `gear_stats`, `gear_passives`, `enemy_weaknesses`, `status_resistances`, `enemy_passives`, `random_stats`, `swap_gear_types`, `full_strength`, `shops_sell_anything`, `story_items`: `on` or `off`; `encounter_rate`: `normal`, `half` or `double`; `chest_quantity`: `default`, `9` or `50`; `exp_rate`, `gil_rate`, `mrp_rate`: `0.25` to `10`).
+Copy `mod/FFRRandomizer` into `FINAL FANTASY RESONANCE\FFRS\Binaries\Win64\ue4ss\Mods\`. Without the app, the mod picks a seed on first launch and writes it to `Randomizer.txt` in that folder; edit that file to change the seed or options (`items`, `shops`, `visions`, `enemies`, `bosses`, `abilities`, `mix_physical_magic`, `finishers`, `supports`, `character_moves`, `character_finishers`, `mix_character_moves`, `character_stats`, `gear_stats`, `gear_passives`, `enemy_weaknesses`, `status_resistances`, `enemy_passives`, `random_stats`, `swap_gear_types`, `full_strength`, `shops_sell_anything`, `story_items`: `on` or `off`; `encounter_rate`: `normal`, `half` or `double`; `chest_quantity`: `default`, `9` or `50`; `exp_rate`, `gil_rate`, `mrp_rate`: `0.25` to `10`; `music`: `off`, `shuffle` or `mixed`).
 
 ## Repository
 | Folder | What's in it |
@@ -45,7 +46,7 @@ Copy `mod/FFRRandomizer` into `FINAL FANTASY RESONANCE\FFRS\Binaries\Win64\ue4ss
 
 Build a release:
 ```
-powershell -ExecutionPolicy Bypass -File tools/make_release.ps1 -Version 0.6.1
+powershell -ExecutionPolicy Bypass -File tools/make_release.ps1 -Version 1.0.0
 ```
 
 ## License

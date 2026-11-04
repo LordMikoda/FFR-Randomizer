@@ -52,7 +52,7 @@ namespace FFRRandomizerGui
     static class Game
     {
         // Kept in step with MOD_VERSION in the mod's main.lua.
-        public const string AppVersion = "0.8.0";
+        public const string AppVersion = "1.0.0";
         public const string SteamAppId = "3259780";
         public const string FolderName = "FINAL FANTASY RESONANCE";
         public const string ModPath = @"FFRS\Binaries\Win64\ue4ss\Mods\FFRRandomizer";
@@ -98,7 +98,9 @@ namespace FFRRandomizerGui
             "# Rewards from every battle: 0.25 to 10 in steps of 0.25. 1 is the game's own.\n" +
             "exp_rate={26}\n" +
             "gil_rate={27}\n" +
-            "mrp_rate={28}\n";
+            "mrp_rate={28}\n" +
+            "# Music: off, shuffle (battle and field tracks each swap among themselves) or mixed (one pool)\n" +
+            "music={29}\n";
 
         // The keys of the on/off lines, in the template's order after the seed.
         public static readonly string[] ToggleKeys = {
@@ -284,6 +286,8 @@ namespace FFRRandomizerGui
         public int Traps;
         // EXP, Gil and MRP as quarter steps: 4 is 1x, 1 is 0.25x, 40 is 10x.
         public int[] Rates = { 4, 4, 4 };
+        // 0 off, 1 shuffle, 2 mixed.
+        public int Music;
     }
 
     // The seed and every option in one line, such as FFR2-0631G07ZQZ-49353958654:
@@ -293,8 +297,9 @@ namespace FFRRandomizerGui
     // file's order (Game.ToggleKeys, then Game.ChaosKeys), 23 and 24 the
     // encounter rate, 25 and 26 the chest quantity, 27 and 28 kept for trapped
     // chests (always 0: the game's chest traps couldn't start a fight),
-    // then six bits each for the EXP, Gil and MRP rates (quarter steps less 1);
-    // 47 to 49 are free. FFR1 (0.7.0) had 7 characters and stopped at bit 26.
+    // then six bits each for the EXP, Gil and MRP rates (quarter steps less 1),
+    // 47 and 48 the music mode (1.0.0); 49 is free. FFR1 (0.7.0) had 7
+    // characters and stopped at bit 26.
     static class SettingsCode
     {
         public const int Format = 2;
@@ -304,6 +309,7 @@ namespace FFRRandomizerGui
         public static readonly string[] Encounters = { "normal", "half", "double" };
         public static readonly string[] Quantities = { "default", "9", "50" };
         public static readonly string[] RateKeys = { "exp_rate", "gil_rate", "mrp_rate" };
+        public static readonly string[] Musics = { "off", "shuffle", "mixed" };
 
         public static string Encode(RunOptions o)
         {
@@ -322,6 +328,7 @@ namespace FFRRandomizerGui
             {
                 bits |= (long)(o.Rates[i] - 1) << (29 + 6 * i);
             }
+            bits |= (long)o.Music << 47;
             StringBuilder text = new StringBuilder("FFR" + Format + "-");
             for (int i = 9; i >= 0; i--)
             {
@@ -369,6 +376,7 @@ namespace FFRRandomizerGui
             {
                 o.Rates[i] = values.ContainsKey(RateKeys[i]) ? RateSteps(values[RateKeys[i]]) : 4;
             }
+            o.Music = Math.Max(0, Array.IndexOf(Musics, Lookup(values, "music").ToLowerInvariant()));
             return o;
         }
 
@@ -424,9 +432,11 @@ namespace FFRRandomizerGui
                 {
                     o.Rates[i] = (int)((bits >> (29 + 6 * i)) & 63) + 1;
                 }
-                used = 47;
+                o.Music = (int)((bits >> 47) & 3);
+                used = 49;
             }
-            if ((bits >> used) != 0 || o.Encounter > 2 || o.Quantity > 2 || o.Traps > 2 || Math.Max(o.Rates[0], Math.Max(o.Rates[1], o.Rates[2])) > 40)
+            if ((bits >> used) != 0 || o.Encounter > 2 || o.Quantity > 2 || o.Traps > 2 || o.Music > 2
+                || Math.Max(o.Rates[0], Math.Max(o.Rates[1], o.Rates[2])) > 40)
             {
                 o = null;
                 error = "This code has options this app doesn’t know. Update the app to load it.";
@@ -806,6 +816,9 @@ namespace FFRRandomizerGui
         readonly RadioButton[] quantityButtons = new RadioButton[3];
         readonly string[] quantityValues = { "default", "9", "50" };
         readonly Label quantityHelp = new Label();
+        readonly RadioButton[] musicButtons = new RadioButton[3];
+        readonly string[] musicValues = { "off", "shuffle", "mixed" };
+        readonly Label musicHelp = new Label();
         // EXP, Gil and MRP in quarter steps, 1 (0.25x) to 40 (10x).
         readonly TrackBar[] rateBars = new TrackBar[3];
         readonly Label[] rateLabels = new Label[3];
@@ -904,6 +917,8 @@ namespace FFRRandomizerGui
             light.Left.Add(BuildSection(BuildShuffles));
             light.Left.Add(BuildSection(y => BuildChoice("Chest quantity", y, new[] { "Default", "Up to 9", "Up to 50" },
                 quantityButtons, quantityHelp)));
+            light.Left.Add(BuildSection(y => BuildChoice("Music", y, new[] { "Off", "Shuffle", "Mixed" },
+                musicButtons, musicHelp)));
             light.Right.Add(BuildSection(y => AddToggles(light, "Visions", y,
                 Row("Vision abilities", "Abilities and passives swap among Physical or Magic Visions.", abilitiesToggle),
                 Row("Supports stay supports", "Fina, Leah, Ayaka and Y\u2019shtola keep 5 or more healing abilities.", supportsToggle),
@@ -1423,6 +1438,8 @@ namespace FFRRandomizerGui
             }
             o.Quantity = which;
             o.Encounter = which == 2 ? 2 : 0;
+            // WoL keeps the game's music, Dark Knight shuffles, True Chaos mixes.
+            o.Music = which;
             return o;
         }
 
@@ -1442,7 +1459,8 @@ namespace FFRRandomizerGui
             for (int i = 0; i < 3; i++)
             {
                 RunOptions preset = Preset(i);
-                bool match = current.Encounter == preset.Encounter && current.Quantity == preset.Quantity;
+                bool match = current.Encounter == preset.Encounter && current.Quantity == preset.Quantity
+                    && current.Music == preset.Music;
                 for (int t = 0; t < SettingsCode.ToggleCount && match; t++)
                 {
                     match = current.Toggles[t] == preset.Toggles[t];
@@ -1801,7 +1819,8 @@ namespace FFRRandomizerGui
         {
             int quantity = Picked(quantityButtons);
             int encounter = Picked(encounterButtons);
-            foreach (RadioButton[] buttons in new[] { quantityButtons, encounterButtons })
+            int music = Picked(musicButtons);
+            foreach (RadioButton[] buttons in new[] { quantityButtons, encounterButtons, musicButtons })
             {
                 foreach (RadioButton option in buttons)
                 {
@@ -1818,6 +1837,9 @@ namespace FFRRandomizerGui
             encounterHelp.Text = encounter == 0 ? "Random battles as often as usual."
                 : encounter == 1 ? "Half as many random battles: twice the walk between them."
                 : "Twice as many random battles: half the walk between them.";
+            musicHelp.Text = music == 0 ? "The game’s own music. Airship and chocobo music never change."
+                : music == 1 ? "Battle tracks swap among battles, field and town tracks among theirs."
+                : "Battle, field and town tracks all swap in one pool.";
         }
 
         static int Picked(RadioButton[] buttons)
@@ -1856,6 +1878,7 @@ namespace FFRRandomizerGui
             o.Seed = seedBox.Text.Trim();
             o.Encounter = Picked(encounterButtons);
             o.Quantity = Picked(quantityButtons);
+            o.Music = Picked(musicButtons);
             for (int i = 0; i < 3; i++)
             {
                 o.Rates[i] = rateBars[i] == null ? 4 : rateBars[i].Value;
@@ -1874,6 +1897,7 @@ namespace FFRRandomizerGui
             }
             encounterButtons[o.Encounter].Checked = true;
             quantityButtons[o.Quantity].Checked = true;
+            musicButtons[o.Music].Checked = true;
             for (int i = 0; i < 3; i++)
             {
                 rateBars[i].Value = o.Rates[i];
@@ -2176,6 +2200,7 @@ namespace FFRRandomizerGui
             UpdateOptions();
             PickChoice(values, "chest_quantity", quantityValues, quantityButtons);
             PickChoice(values, "encounter_rate", encounterValues, encounterButtons);
+            PickChoice(values, "music", musicValues, musicButtons);
             for (int i = 0; i < 3; i++)
             {
                 string rate;
@@ -2277,6 +2302,7 @@ namespace FFRRandomizerGui
                 {
                     values.Add(SettingsCode.RateText(rateBars[i].Value));
                 }
+                values.Add(musicValues[Picked(musicButtons)]);
                 Game.WriteSettings(gameDir, values.ToArray());
                 GuiConfig.SaveGameDir(gameDir);
                 RefreshStatus();

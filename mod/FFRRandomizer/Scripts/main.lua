@@ -3,7 +3,7 @@
 -- applies it in memory. Nothing on disk in the game changes, and removing this
 -- folder undoes everything.
 
-local MOD_VERSION = "0.8.0"
+local MOD_VERSION = "1.0.0"
 local LOG_PREFIX = "[FFRRandomizer] "
 local CHECK_INTERVAL_MS = 3000
 
@@ -63,13 +63,14 @@ local TABLES = {
 -- Tables only some options need, by the setting that needs them.
 local NEEDED_BY = {
     playables = function(settings) return settings.swapGear end,
-    maps = function(settings) return settings.encounterRate ~= "normal" end,
+    maps = function(settings) return settings.encounterRate ~= "normal" or settings.music ~= "off" end,
+    battleGroups = function(settings) return settings.enemies or settings.bosses or settings.music ~= "off" end,
     difficulty = function(settings) return settings.expRate ~= 1 or settings.gilRate ~= 1 or settings.mrpRate ~= 1 end,
 }
 -- Tables the plan can do without, the ones only the enemy and boss shuffles
 -- need, and the ones only the Vision ability shuffle needs.
 local OPTIONAL_TABLES = { questBoard = true }
-local ENEMY_TABLES = { battleGroups = true, unitDesign = true }
+local ENEMY_TABLES = { unitDesign = true }
 local ABILITY_TABLES = { awakening = true, synchro = true, passives = true }
 
 -- Each playable character's level table, keyed "level" .. its suffix, such as
@@ -163,6 +164,9 @@ local HEALING_SKILLS = {
 }
 
 local CHEST_CAPS = { default = false, ["9"] = 9, ["50"] = 50 }
+-- off; shuffle: battle tracks swap among battle tracks, field and town
+-- tracks among theirs; mixed: one pool for both.
+local MUSIC_MODES = { off = true, shuffle = true, mixed = true }
 
 -- Settings ------------------------------------------------------------------
 
@@ -206,6 +210,8 @@ chest_quantity=%s
 exp_rate=%s
 gil_rate=%s
 mrp_rate=%s
+# Music: off, shuffle (battle and field tracks each swap among themselves) or mixed (one pool)
+music=%s
 ]]
 
 local function trim(text)
@@ -244,7 +250,7 @@ local function writeSettings(settings)
         onOff(settings.statusResists), onOff(settings.enemyPassives), settings.encounterRate,
         onOff(settings.randomStats), onOff(settings.swapGear), onOff(settings.fullStrength),
         onOff(settings.shopsAnything), onOff(settings.storyItems), settings.chestQuantity,
-        rateText(settings.expRate), rateText(settings.gilRate), rateText(settings.mrpRate)))
+        rateText(settings.expRate), rateText(settings.gilRate), rateText(settings.mrpRate), settings.music))
     file:close()
 end
 
@@ -297,7 +303,12 @@ local function readSettings()
         expRate = readRate(values.exp_rate, "exp_rate"),
         gilRate = readRate(values.gil_rate, "gil_rate"),
         mrpRate = readRate(values.mrp_rate, "mrp_rate"),
+        music = (values.music or "off"):lower(),
     }
+    if not MUSIC_MODES[settings.music] then
+        log("Unknown music '" .. settings.music .. "', using off.")
+        settings.music = "off"
+    end
     if CHEST_CAPS[settings.chestQuantity] == nil then
         log("Unknown chest_quantity '" .. settings.chestQuantity .. "', using default.")
         settings.chestQuantity = "default"
@@ -326,8 +337,8 @@ end
 -- encounter rate, 25 and 26 the chest quantity, 27 and 28 kept for trapped
 -- chests (always 0; the game's chest traps couldn't start a fight), then
 -- six bits each for the EXP, Gil and MRP rates as quarter steps above 0.25
--- (1x is 3). Bits 47 to 49 are free. FFR1 (0.7.0) had 7 characters and no
--- traps or rates.
+-- (1x is 3), 47 and 48 the music mode (1.0.0). Bit 49 is free. FFR1 (0.7.0)
+-- had 7 characters and no traps or rates.
 
 local CODE_TOGGLES = {
     "items", "shops", "visions", "enemies", "bosses",
@@ -338,6 +349,7 @@ local CODE_TOGGLES = {
 }
 local CODE_ENCOUNTERS = { normal = 0, half = 1, double = 2 }
 local CODE_QUANTITIES = { default = 0, ["9"] = 1, ["50"] = 2 }
+local CODE_MUSIC = { off = 0, shuffle = 1, mixed = 2 }
 local CODE_DIGITS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 local function settingsCode(settings)
@@ -351,6 +363,7 @@ local function settingsCode(settings)
     for i, rate in ipairs({ settings.expRate, settings.gilRate, settings.mrpRate }) do
         bits = bits | (math.floor(rate * 4 + 0.5) - 1) << (29 + 6 * (i - 1))
     end
+    bits = bits | (CODE_MUSIC[settings.music] << 47)
     local chars = {}
     for i = 9, 0, -1 do
         local digit = (bits >> (5 * i)) & 31
@@ -1734,9 +1747,101 @@ local function scaleRewards(plan, settings, tables)
         rateText(settings.gilRate), rateText(settings.mrpRate), rows))
 end
 
+-- Music: battle groups name their track in bgmCueName, maps list theirs in
+-- bgmList (one entry per story stage). Each track becomes another one, the
+-- same everywhere it plays. Vehicle music is hard-coded in the game and stays.
+local MUSIC_SKIP = { BGM_PP_DUMMY = true }
+
+local function cueText(value)
+    if type(value) == "string" then
+        return value
+    end
+    local ok, text = pcall(function() return value:ToString() end)
+    return ok and text or ""
+end
+
+local function musicCue(cue)
+    return cue:find("^BGM_") ~= nil and not MUSIC_SKIP[cue]
+end
+
+local function shuffleMusic(plan, settings, tables)
+    local battles, fields = {}, {}
+    for _, name in ipairs(sortedRowNames(tables.battleGroups)) do
+        local cue = cueText(tables.battleGroups:FindRow(name).bgmCueName)
+        if musicCue(cue) then
+            table.insert(battles, { row = name, cue = cue })
+        end
+    end
+    for _, name in ipairs(sortedRowNames(tables.maps)) do
+        for i, entry in ipairs(arrayItems(tables.maps:FindRow(name).bgmList)) do
+            local cue = cueText(entry.CueName)
+            if musicCue(cue) then
+                table.insert(fields, { row = name, index = i, cue = cue })
+            end
+        end
+    end
+    local function distinct(...)
+        local seen, list = {}, {}
+        for _, slots in ipairs({ ... }) do
+            for _, slot in ipairs(slots) do
+                if not seen[slot.cue] then
+                    seen[slot.cue] = true
+                    table.insert(list, slot.cue)
+                end
+            end
+        end
+        table.sort(list)
+        return list
+    end
+    local rng = newRng(settings.seed, "music")
+    local function permutation(cues)
+        local shuffled = {}
+        for i, cue in ipairs(cues) do
+            shuffled[i] = cue
+        end
+        rng.shuffle(shuffled)
+        local map = {}
+        for i, cue in ipairs(cues) do
+            map[cue] = shuffled[i]
+        end
+        return map
+    end
+    local battleMap, fieldMap
+    if settings.music == "mixed" then
+        battleMap = permutation(distinct(battles, fields))
+        fieldMap = battleMap
+    else
+        battleMap = permutation(distinct(battles))
+        fieldMap = permutation(distinct(fields))
+    end
+    for _, slot in ipairs(battles) do
+        addPatch(plan, "battleGroups", slot.row, "bgmCueName", battleMap[slot.cue])
+    end
+    for _, slot in ipairs(fields) do
+        addPatch(plan, "maps", slot.row, "CueName", fieldMap[slot.cue], "bgmList", slot.index)
+    end
+    local function short(cue)
+        return (cue:gsub("^BGM_PP_", ""))
+    end
+    local function list(kind, slots, map, unit)
+        local counts = {}
+        for _, slot in ipairs(slots) do
+            counts[slot.cue] = (counts[slot.cue] or 0) + 1
+        end
+        for _, cue in ipairs(distinct(slots)) do
+            addSpoiler(plan, "Music", string.format("%-6s %-34s -> %-34s (%d %s)", kind, short(cue), short(map[cue]),
+                counts[cue], counts[cue] == 1 and unit or unit .. "s"))
+        end
+    end
+    list("Battle", battles, battleMap, "battle")
+    list("Field", fields, fieldMap, "map")
+    log(string.format("Music: %s, %d battle groups and %d map entries over %d battle and %d field tracks.",
+        settings.music, #battles, #fields, #distinct(battles), #distinct(fields)))
+end
+
 local SPOILER_SECTIONS = { "Visions", "Vision abilities", "Finishers", "Characters", "Character stats",
     "Gear types", "Gear stats", "Gear passives", "Bosses", "Enemies", "Enemy weaknesses", "Status resistances",
-    "Enemy passives", "Encounter rate", "Rewards", "Chests", "Drops and steals", "Shops" }
+    "Enemy passives", "Encounter rate", "Rewards", "Music", "Chests", "Drops and steals", "Shops" }
 
 -- Four words hashed from the settings code and the spoiler's sections (with
 -- unit row keys, not names, so the game's language doesn't change it): two
@@ -1789,8 +1894,8 @@ local function writeSpoiler(plan, settings)
     file:write(string.format("We are Chaos: Fully random stats: %s   Swap gear types: %s   Enemies at full strength: %s   Shops sell anything: %s   Story items: %s\n",
         onOff(settings.randomStats), onOff(settings.swapGear), onOff(settings.fullStrength),
         onOff(settings.shopsAnything), onOff(settings.storyItems)))
-    file:write(string.format("Rewards: EXP x%s   Gil x%s   MRP x%s\n", rateText(settings.expRate),
-        rateText(settings.gilRate), rateText(settings.mrpRate)))
+    file:write(string.format("Rewards: EXP x%s   Gil x%s   MRP x%s   Music: %s\n", rateText(settings.expRate),
+        rateText(settings.gilRate), rateText(settings.mrpRate), settings.music))
     if settings.enemies or settings.bosses then
         file:write("With enemies or bosses on, drops and steals stay with the spot: a unit's list below\n" ..
             "goes to whichever unit fights in its place.\n")
@@ -1878,6 +1983,9 @@ local function buildPlan(settings)
     if NEEDED_BY.difficulty(settings) then
         scaleRewards(plan, settings, tables)
     end
+    if settings.music ~= "off" then
+        shuffleMusic(plan, settings, tables)
+    end
     return plan
 end
 
@@ -1929,6 +2037,13 @@ local function applyPatch(row, patch)
         target, key = target[key], patch.sub
     end
     local current = target[key]
+    -- String fields (music cues) come back as FString objects.
+    if type(patch.value) == "string" and current ~= nil and type(current) ~= "string" then
+        local ok, text = pcall(function() return current:ToString() end)
+        if ok then
+            current = text
+        end
+    end
     if current == patch.value or (type(current) == "number" and type(patch.value) == "number"
             and math.abs(current - patch.value) < 1e-4) then
         return false

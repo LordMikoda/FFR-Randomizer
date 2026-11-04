@@ -2,7 +2,11 @@
 # and mod folder inside, then FFRRandomizer-<version>.zip holding Setup and the
 # README. Output goes to release/<version>/.
 # Run: powershell -ExecutionPolicy Bypass -File tools/make_release.ps1 -Version 0.1.1
-param([Parameter(Mandatory)] [string]$Version)
+# -Ue4ss is a folder laid out like the game's Win64 folder (dwmapi.dll, ue4ss\...)
+# plus ue4ss-version.txt; Setup offers to install it when a player has no UE4SS.
+# It lives outside the vault: copy it from a tested game install. Pass "" to
+# leave UE4SS out.
+param([Parameter(Mandatory)] [string]$Version, [string]$Ue4ss = "D:\AI Stuff\Exports\UE4SS-4.0.0-rc1")
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 
@@ -24,6 +28,11 @@ foreach ($file in Get-ChildItem $mod -Recurse -File) {
     $target = Join-Path (Join-Path $payload "FFRRandomizer") $file.FullName.Substring($mod.Length + 1)
     New-Item -ItemType Directory -Force (Split-Path -Parent $target) | Out-Null
     Copy-Item $file.FullName $target
+}
+
+if ($Ue4ss -ne "") {
+    if (-not (Test-Path (Join-Path $Ue4ss "ue4ss-version.txt"))) { throw "No ue4ss-version.txt in $Ue4ss" }
+    Copy-Item -Recurse $Ue4ss (Join-Path $payload "ue4ss")
 }
 
 $setup = Join-Path $out "FFRRandomizer-Setup.exe"

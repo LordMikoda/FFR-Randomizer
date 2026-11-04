@@ -16,7 +16,7 @@ using Microsoft.Win32;
 
 [assembly: System.Reflection.AssemblyTitle("FFR Randomizer")]
 [assembly: System.Reflection.AssemblyProduct("FFR Randomizer")]
-[assembly: System.Reflection.AssemblyVersion("0.7.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.8.0.0")]
 
 namespace FFRRandomizerGui
 {
@@ -52,7 +52,7 @@ namespace FFRRandomizerGui
     static class Game
     {
         // Kept in step with MOD_VERSION in the mod's main.lua.
-        public const string AppVersion = "0.7.0";
+        public const string AppVersion = "0.8.0";
         public const string SteamAppId = "3259780";
         public const string FolderName = "FINAL FANTASY RESONANCE";
         public const string ModPath = @"FFRS\Binaries\Win64\ue4ss\Mods\FFRRandomizer";
@@ -94,7 +94,11 @@ namespace FFRRandomizerGui
             "shops_sell_anything={23}\n" +
             "story_items={24}\n" +
             "# default, 9 or 50. Weapons, armor and accessories always stay at 1.\n" +
-            "chest_quantity={25}\n";
+            "chest_quantity={25}\n" +
+            "# Rewards from every battle: 0.25 to 10 in steps of 0.25. 1 is the game's own.\n" +
+            "exp_rate={26}\n" +
+            "gil_rate={27}\n" +
+            "mrp_rate={28}\n";
 
         // The keys of the on/off lines, in the template's order after the seed.
         public static readonly string[] ToggleKeys = {
@@ -270,81 +274,132 @@ namespace FFRRandomizerGui
         }
     }
 
-    // The seed and every option in one line, such as FFR1-4KQ7M2D-49353958654:
-    // FFR and the format number, the options as bits in 7 Crockford base32
+    // Everything a settings code holds.
+    class RunOptions
+    {
+        public string Seed = "";
+        public bool[] Toggles = new bool[SettingsCode.ToggleCount];
+        public int Encounter, Quantity;
+        // Kept in the code for trapped chests, which aren't built; always 0.
+        public int Traps;
+        // EXP, Gil and MRP as quarter steps: 4 is 1x, 1 is 0.25x, 40 is 10x.
+        public int[] Rates = { 4, 4, 4 };
+    }
+
+    // The seed and every option in one line, such as FFR2-0631G07ZQZ-49353958654:
+    // FFR and the format number, the options as bits in 10 Crockford base32
     // characters, then the seed as typed. Must stay in step with settingsCode
     // in the mod's main.lua. Bits 0 to 22 are the switches in the settings
     // file's order (Game.ToggleKeys, then Game.ChaosKeys), 23 and 24 the
-    // encounter rate, 25 and 26 the chest quantity; 27 to 34 are free.
+    // encounter rate, 25 and 26 the chest quantity, 27 and 28 kept for trapped
+    // chests (always 0: the game's chest traps couldn't start a fight),
+    // then six bits each for the EXP, Gil and MRP rates (quarter steps less 1);
+    // 47 to 49 are free. FFR1 (0.7.0) had 7 characters and stopped at bit 26.
     static class SettingsCode
     {
-        public const int Format = 1;
+        public const int Format = 2;
+        public const int ToggleCount = 23;
         const string Digits = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-        const int ToggleCount = 23;
+        const string Example = "Codes look like FFR2-0631G07ZQZ-49353958654.";
+        public static readonly string[] Encounters = { "normal", "half", "double" };
+        public static readonly string[] Quantities = { "default", "9", "50" };
+        public static readonly string[] RateKeys = { "exp_rate", "gil_rate", "mrp_rate" };
 
-        public static string Encode(string seed, bool[] toggles, int encounter, int quantity)
+        public static string Encode(RunOptions o)
         {
             long bits = 0;
-            for (int i = 0; i < toggles.Length; i++)
+            for (int i = 0; i < ToggleCount; i++)
             {
-                if (toggles[i])
+                if (o.Toggles[i])
                 {
                     bits |= 1L << i;
                 }
             }
-            bits |= (long)encounter << ToggleCount;
-            bits |= (long)quantity << (ToggleCount + 2);
+            bits |= (long)o.Encounter << 23;
+            bits |= (long)o.Quantity << 25;
+            bits |= (long)o.Traps << 27;
+            for (int i = 0; i < 3; i++)
+            {
+                bits |= (long)(o.Rates[i] - 1) << (29 + 6 * i);
+            }
             StringBuilder text = new StringBuilder("FFR" + Format + "-");
-            for (int i = 6; i >= 0; i--)
+            for (int i = 9; i >= 0; i--)
             {
                 text.Append(Digits[(int)((bits >> (5 * i)) & 31)]);
             }
-            return text.Append('-').Append(seed).ToString();
+            return text.Append('-').Append(o.Seed).ToString();
         }
 
-        // The code a settings file's values give, read the way the mod reads
-        // them: items, shops and Visions default to on, the rest to off.
-        public static string FromValues(Dictionary<string, string> values)
+        // A rate as the settings file writes it, the way the mod writes it: 1, 2.5, 0.25.
+        public static string RateText(int steps)
         {
+            return (steps / 4.0).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        // Read the way the mod reads it: pulled to the nearest quarter, 0.25 to 10.
+        public static int RateSteps(string text)
+        {
+            double value;
+            if (!double.TryParse(text ?? "", System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out value))
+            {
+                return 4;
+            }
+            return Math.Max(1, Math.Min(40, (int)Math.Floor(value * 4 + 0.5)));
+        }
+
+        // A settings file's values, read the way the mod reads them: items,
+        // shops and Visions default to on, the rest to off.
+        public static RunOptions FromValues(Dictionary<string, string> values)
+        {
+            RunOptions o = new RunOptions();
             List<string> keys = new List<string>(Game.ToggleKeys);
             keys.AddRange(Game.ChaosKeys);
-            bool[] toggles = new bool[keys.Count];
             for (int i = 0; i < keys.Count; i++)
             {
                 string value;
-                toggles[i] = values.TryGetValue(keys[i], out value)
+                o.Toggles[i] = values.TryGetValue(keys[i], out value)
                     ? !(value.ToLowerInvariant() == "off" || value.ToLowerInvariant() == "false" || value == "0")
                     : i < 3;
             }
-            string seed, encounter, quantity;
-            values.TryGetValue("seed", out seed);
-            values.TryGetValue("encounter_rate", out encounter);
-            values.TryGetValue("chest_quantity", out quantity);
-            return Encode(seed ?? "", toggles,
-                Math.Max(0, Array.IndexOf(new[] { "normal", "half", "double" }, (encounter ?? "").ToLowerInvariant())),
-                Math.Max(0, Array.IndexOf(new[] { "default", "9", "50" }, (quantity ?? "").ToLowerInvariant())));
+            o.Seed = Lookup(values, "seed");
+            o.Encounter = Math.Max(0, Array.IndexOf(Encounters, Lookup(values, "encounter_rate").ToLowerInvariant()));
+            o.Quantity = Math.Max(0, Array.IndexOf(Quantities, Lookup(values, "chest_quantity").ToLowerInvariant()));
+            for (int i = 0; i < 3; i++)
+            {
+                o.Rates[i] = values.ContainsKey(RateKeys[i]) ? RateSteps(values[RateKeys[i]]) : 4;
+            }
+            return o;
         }
 
-        // Reads a code. On failure, error says why and the outputs are unset.
-        public static bool TryDecode(string code, out string seed, out bool[] toggles, out int encounter,
-            out int quantity, out string error)
+        static string Lookup(Dictionary<string, string> values, string key)
         {
-            seed = null;
-            toggles = null;
-            encounter = quantity = 0;
+            string value;
+            return values.TryGetValue(key, out value) ? value : "";
+        }
+
+        // Reads an FFR1 or FFR2 code. On failure, error says why.
+        public static bool TryDecode(string code, out RunOptions o, out string error)
+        {
+            o = null;
             error = null;
-            Match match = Regex.Match(code ?? "", @"^\s*FFR(\d+)-([0-9A-Za-z]{7})-(\S{1,40})\s*$", RegexOptions.IgnoreCase);
+            Match match = Regex.Match(code ?? "", @"^\s*FFR(\d+)-([0-9A-Za-z]+)-(\S{1,40})\s*$", RegexOptions.IgnoreCase);
             if (!match.Success)
             {
-                error = "That isn’t an FFR settings code. Codes look like FFR1-4KQ7M2D-49353958654.";
+                error = "That isn’t an FFR settings code. " + Example;
                 return false;
             }
             int format;
-            if (!int.TryParse(match.Groups[1].Value, out format) || format != Format)
+            int.TryParse(match.Groups[1].Value, out format);
+            if (format > Format)
             {
-                error = format > Format
-                    ? "This code is from a newer FFR Randomizer (FFR" + format + "). Update the app to load it."
-                    : "That isn’t an FFR settings code. Codes look like FFR1-4KQ7M2D-49353958654.";
+                error = "This code is from a newer FFR Randomizer (FFR" + format + "). Update the app to load it.";
+                return false;
+            }
+            int length = format == 1 ? 7 : format == 2 ? 10 : 0;
+            if (length == 0 || match.Groups[2].Value.Length != length)
+            {
+                error = "That isn’t an FFR settings code. " + Example;
                 return false;
             }
             long bits = 0;
@@ -358,19 +413,30 @@ namespace FFRRandomizerGui
                 }
                 bits = (bits << 5) + digit;
             }
-            encounter = (int)((bits >> ToggleCount) & 3);
-            quantity = (int)((bits >> (ToggleCount + 2)) & 3);
-            if ((bits >> (ToggleCount + 4)) != 0 || encounter > 2 || quantity > 2)
+            o = new RunOptions();
+            o.Encounter = (int)((bits >> 23) & 3);
+            o.Quantity = (int)((bits >> 25) & 3);
+            int used = 27;
+            if (format == 2)
             {
+                o.Traps = (int)((bits >> 27) & 3);
+                for (int i = 0; i < 3; i++)
+                {
+                    o.Rates[i] = (int)((bits >> (29 + 6 * i)) & 63) + 1;
+                }
+                used = 47;
+            }
+            if ((bits >> used) != 0 || o.Encounter > 2 || o.Quantity > 2 || o.Traps > 2 || Math.Max(o.Rates[0], Math.Max(o.Rates[1], o.Rates[2])) > 40)
+            {
+                o = null;
                 error = "This code has options this app doesn’t know. Update the app to load it.";
                 return false;
             }
-            toggles = new bool[ToggleCount];
             for (int i = 0; i < ToggleCount; i++)
             {
-                toggles[i] = ((bits >> i) & 1) == 1;
+                o.Toggles[i] = ((bits >> i) & 1) == 1;
             }
-            seed = match.Groups[3].Value;
+            o.Seed = match.Groups[3].Value;
             return true;
         }
     }
@@ -740,6 +806,12 @@ namespace FFRRandomizerGui
         readonly RadioButton[] quantityButtons = new RadioButton[3];
         readonly string[] quantityValues = { "default", "9", "50" };
         readonly Label quantityHelp = new Label();
+        // EXP, Gil and MRP in quarter steps, 1 (0.25x) to 40 (10x).
+        readonly TrackBar[] rateBars = new TrackBar[3];
+        readonly Label[] rateLabels = new Label[3];
+        // WoL Mode, Dark Knight Mode, True Chaos Mode, beside the settings code.
+        Panel presetSection;
+        readonly Button[] presetButtons = new Button[3];
         readonly TextBox codeBox = new TextBox();
         readonly Card savedCard = new Card();
         readonly Label savedText = new Label();
@@ -775,6 +847,12 @@ namespace FFRRandomizerGui
             folderSection = BuildSection(BuildFolder);
             seedSection = BuildSection(BuildSeed);
             codeSection = BuildSection(BuildCode);
+            presetSection = BuildSection(BuildPresets);
+            foreach (Button button in presetButtons)
+            {
+                button.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            }
+            presetSection.Resize += delegate { LayOutPresets(); };
             BuildTabs();
             int content = 0;
             foreach (OptionTab tab in tabs)
@@ -797,6 +875,7 @@ namespace FFRRandomizerGui
             Controls.Add(folderSection);
             Controls.Add(seedSection);
             Controls.Add(codeSection);
+            Controls.Add(presetSection);
             BuildStrip();
             body.AutoScroll = true;
             body.BackColor = Theme.Ground;
@@ -832,6 +911,7 @@ namespace FFRRandomizerGui
             light.Right.Add(BuildSection(y => AddToggles(light, "Characters", y,
                 Row("Character moves", "Level-up moves swap among characters of the same attack type.", movesToggle),
                 Row("Character finishers", "Finishers swap among characters of the same attack type.", characterFinishersToggle))));
+            light.Right.Add(BuildSection(BuildRewards));
             light.Toggles.AddRange(new[] { itemsToggle, shopsToggle, visionsToggle, enemiesToggle, bossesToggle });
 
             OptionTab become = AddTab("We must BECOME Chaos");
@@ -842,12 +922,12 @@ namespace FFRRandomizerGui
                 Row("Mix character moves", "Moves and finishers swap across Physical and Magic characters.", mixCharactersToggle),
                 Row("Random character stats", "Five main stats trade growth curves per character. HP and MP stay.", statsToggle))));
             become.Left.Add(BuildSection(y => AddToggles(become, "Gear", y,
-                Row("Gear stats", "Gear of one kind trades stat sets. Prices stay.", gearStatsToggle, "NEW"),
-                Row("Gear passives", "Passives swap among weapons, armor or accessories.", gearPassivesToggle, "NEW"))));
+                Row("Gear stats", "Gear of one kind trades stat sets. Prices stay.", gearStatsToggle),
+                Row("Gear passives", "Passives swap among weapons, armor or accessories.", gearPassivesToggle))));
             become.Right.Add(BuildSection(y => AddToggles(become, "Enemies", y,
-                Row("Enemy weaknesses", "Each enemy\u2019s element weaknesses and resistances trade places.", weaknessesToggle, "NEW"),
-                Row("Status resistances", "Enemies resist different ailments. Bosses keep theirs.", statusToggle, "NEW"),
-                Row("Enemy passives", "Passives swap among regular enemies. Bosses keep theirs.", enemyPassivesToggle, "NEW"))));
+                Row("Enemy weaknesses", "Each enemy\u2019s element weaknesses and resistances trade places.", weaknessesToggle),
+                Row("Status resistances", "Enemies resist different ailments. Bosses keep theirs.", statusToggle),
+                Row("Enemy passives", "Passives swap among regular enemies. Bosses keep theirs.", enemyPassivesToggle))));
             become.Right.Add(BuildSection(y => BuildChoice("Encounter rate", y, new[] { "Normal", "Half", "Double" },
                 encounterButtons, encounterHelp)));
 
@@ -855,13 +935,13 @@ namespace FFRRandomizerGui
             chaos.Wide.Add(BuildSection(y => AddNote("No guard rails. All off by default.", y)));
             chaos.Wide.Add(BuildSection(BuildChaosWarning));
             chaos.Left.Add(BuildSection(y => AddToggles(chaos, "Characters and gear", y,
-                Row("Fully random stats", "Every stat curve, HP and MP too, comes from anyone. No budget.", randomStatsToggle, "NEW"),
-                Row("Swap gear types", "Characters trade weapon and armor types. Rain might use a bow.", swapGearToggle, "NEW"))));
+                Row("Fully random stats", "Every stat curve, HP and MP too, comes from anyone. No budget.", randomStatsToggle),
+                Row("Swap gear types", "Characters trade weapon and armor types. Rain might use a bow.", swapGearToggle))));
             chaos.Left.Add(BuildSection(y => AddToggles(chaos, "Enemies", y,
-                Row("Enemies at full strength", "Swapped enemies and bosses keep their own stats.", fullStrengthToggle, "NEW"))));
+                Row("Enemies at full strength", "Swapped enemies and bosses keep their own stats.", fullStrengthToggle))));
             chaos.Right.Add(BuildSection(y => AddToggles(chaos, "Items and shops", y,
-                Row("Shops sell anything", "Any item with a price can turn up in any shop.", shopsAnythingToggle, "NEW"),
-                Row("Story items in the shuffle", "Key and quest items move too. Can softlock the story.", storyItemsToggle, "NEW"))));
+                Row("Shops sell anything", "Any item with a price can turn up in any shop.", shopsAnythingToggle),
+                Row("Story items in the shuffle", "Key and quest items move too. Can softlock the story.", storyItemsToggle))));
 
             abilitiesToggle.Changed += delegate { UpdateOptions(); };
             movesToggle.Changed += delegate { UpdateOptions(); };
@@ -1001,8 +1081,19 @@ namespace FFRRandomizerGui
                 seedSection.SetBounds(0, y, width, seedSection.Height);
                 y += seedSection.Height;
             }
-            codeSection.SetBounds(0, y, width, codeSection.Height);
-            y += codeSection.Height;
+            if (columns == 2)
+            {
+                codeSection.SetBounds(0, y, column + 2 * pad, codeSection.Height);
+                presetSection.SetBounds(column + pad, y, column + 2 * pad, presetSection.Height);
+                y += Math.Max(codeSection.Height, presetSection.Height);
+            }
+            else
+            {
+                codeSection.SetBounds(0, y, width, codeSection.Height);
+                y += codeSection.Height;
+                presetSection.SetBounds(0, y, width, presetSection.Height);
+                y += presetSection.Height;
+            }
             strip.SetBounds(0, y, width, strip.Height);
             LayOutTabButtons(s, pad, width);
             y += strip.Height;
@@ -1255,9 +1346,176 @@ namespace FFRRandomizerGui
             copy.Click += delegate { CopyCode(); };
             Button paste = MakeButton("Paste code", ContentWidth + Pad - 120, y + 22, 120, 44);
             paste.Click += delegate { PasteCode(); };
-            AddLabel("The seed and every option in one line. Paste a friend’s code to load their settings.", Pad, y + 72,
+            AddLabel("The seed and every option, sliders too. Paste a friend’s code to load it.", Pad, y + 72,
                 ContentWidth, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
             return y + CodeHeight;
+        }
+
+        static readonly string[] PresetNames = { "WoL Mode", "Dark Knight Mode", "True Chaos Mode" };
+
+        // Three buttons that set the switches; LayOutPresets shares the width.
+        int BuildPresets(int y)
+        {
+            AddHeading("Presets", y);
+            int width = (ContentWidth - 16) / 3;
+            for (int i = 0; i < 3; i++)
+            {
+                int which = i;
+                Button button = MakeButton(PresetNames[i], Pad + i * (width + 8), y + 22, width, 44);
+                button.Font = Theme.Ui(10f, FontStyle.Bold);
+                button.Click += delegate { ApplyPreset(which); };
+                presetButtons[i] = button;
+            }
+            AddLabel("One click sets every switch. Lit while yours match; reward sliders stay put.", Pad, y + 72,
+                ContentWidth, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
+            return y + CodeHeight;
+        }
+
+        void LayOutPresets()
+        {
+            if (presetButtons[0] == null)
+            {
+                return;
+            }
+            float s = presetButtons[0].Height / 44f;
+            int pad = (int)Math.Round(Pad * s), gap = (int)Math.Round(8 * s);
+            int width = (presetSection.Width - 2 * pad - 2 * gap) / 3;
+            for (int i = 0; i < 3; i++)
+            {
+                presetButtons[i].SetBounds(pad + i * (width + gap), presetButtons[i].Top, width, presetButtons[i].Height);
+            }
+        }
+
+        // What each preset turns on, by index in SettingToggles(). The reward
+        // sliders and the seed are never part of a preset.
+        static RunOptions Preset(int which)
+        {
+            RunOptions o = new RunOptions();
+            int[] on;
+            if (which == 0)
+            {
+                // WoL Mode: items, Visions and enemies; no shops or bosses.
+                on = new[] { 0, 2, 3 };
+            }
+            else if (which == 1)
+            {
+                // Dark Knight Mode: every shuffle that keeps the game's rules:
+                // no mixing, no random stats, no gear stats, nothing from Chaos.
+                on = new[] { 0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 14, 15, 16, 17 };
+            }
+            else
+            {
+                // True Chaos Mode: everything except the guard rail (supports)
+                // and Random character stats, which Fully random stats replaces.
+                List<int> all = new List<int>();
+                for (int i = 0; i < SettingsCode.ToggleCount; i++)
+                {
+                    if (i != 8 && i != 12)
+                    {
+                        all.Add(i);
+                    }
+                }
+                on = all.ToArray();
+            }
+            foreach (int i in on)
+            {
+                o.Toggles[i] = true;
+            }
+            o.Quantity = which;
+            o.Encounter = which == 2 ? 2 : 0;
+            return o;
+        }
+
+        void ApplyPreset(int which)
+        {
+            RunOptions o = Preset(which);
+            o.Seed = seedBox.Text.Trim();
+            o.Rates = CurrentOptions().Rates;
+            ApplyOptions(o);
+            ShowSaved(PresetNames[which] + " set. Press Create Randomizer File to save it." +
+                (which == 2 ? " This run may be unwinnable." : ""), which != 2);
+        }
+
+        void UpdatePresetButtons()
+        {
+            RunOptions current = CurrentOptions();
+            for (int i = 0; i < 3; i++)
+            {
+                RunOptions preset = Preset(i);
+                bool match = current.Encounter == preset.Encounter && current.Quantity == preset.Quantity;
+                for (int t = 0; t < SettingsCode.ToggleCount && match; t++)
+                {
+                    match = current.Toggles[t] == preset.Toggles[t];
+                }
+                Button button = presetButtons[i];
+                button.BackColor = match ? Theme.Accent : Theme.Button;
+                button.ForeColor = match ? Theme.AccentText : i == 2 ? Theme.Bad : Theme.Text;
+                button.FlatAppearance.BorderColor = match ? Theme.Accent : i == 2 ? Theme.BadBorder : Theme.ButtonBorder;
+            }
+        }
+
+        static readonly string[] RateNames = { "EXP", "Gil", "MRP" };
+
+        // Three slider rows: 0.25x to 10x in quarter steps, with a 1x reset.
+        int BuildRewards(int y)
+        {
+            Card card = AddToggleCard("Rewards", y, 3);
+            for (int i = 0; i < 3; i++)
+            {
+                int which = i, top = i * 64;
+                Label name = new Label();
+                name.Text = RateNames[i];
+                name.Font = Theme.Ui(11f, FontStyle.Bold);
+                name.ForeColor = Theme.Text;
+                name.BackColor = Theme.Panel;
+                name.SetBounds(14, top + 20, 64, 24);
+                TrackBar bar = new TrackBar();
+                bar.Minimum = 1;
+                bar.Maximum = 40;
+                bar.Value = 4;
+                bar.TickStyle = TickStyle.None;
+                bar.SmallChange = 1;
+                bar.LargeChange = 4;
+                bar.AutoSize = false;
+                bar.BackColor = Theme.Panel;
+                bar.AccessibleName = RateNames[i] + " multiplier";
+                bar.SetBounds(84, top + 18, ContentWidth - 84 - 14 - 44 - 8 - 64 - 8, 30);
+                bar.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+                Label value = new Label();
+                value.Font = new Font("Consolas", 11f, FontStyle.Regular);
+                value.ForeColor = Theme.Text;
+                value.BackColor = Theme.Panel;
+                value.TextAlign = ContentAlignment.MiddleRight;
+                value.SetBounds(ContentWidth - 14 - 44 - 8 - 64, top + 18, 64, 28);
+                value.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+                Button reset = new Button();
+                reset.Text = "1x";
+                reset.AccessibleName = "Reset " + RateNames[i] + " to 1x";
+                reset.FlatStyle = FlatStyle.Flat;
+                reset.FlatAppearance.BorderColor = Theme.ButtonBorder;
+                reset.BackColor = Theme.Button;
+                reset.ForeColor = Theme.Text;
+                reset.Font = Theme.Ui(9f, FontStyle.Regular);
+                reset.SetBounds(ContentWidth - 14 - 44, top + 16, 44, 32);
+                reset.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+                reset.Cursor = Cursors.Hand;
+                reset.Click += delegate { rateBars[which].Value = 4; };
+                bar.ValueChanged += delegate
+                {
+                    rateLabels[which].Text = (rateBars[which].Value / 4.0).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "x";
+                    ClearSaved();
+                };
+                rateBars[i] = bar;
+                rateLabels[i] = value;
+                value.Text = "1.00x";
+                card.Controls.Add(name);
+                card.Controls.Add(bar);
+                card.Controls.Add(value);
+                card.Controls.Add(reset);
+            }
+            AddLabel("From every battle, on every difficulty. Expert’s own 1.5x MRP stacks with it.", Pad,
+                y + 22 + 3 * 64 + 6, ContentWidth, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
+            return y + 22 + 3 * 64 + 34;
         }
 
         int BuildShuffles(int y)
@@ -1587,22 +1845,53 @@ namespace FFRRandomizerGui
             UpdateCode();
         }
 
-        string CurrentCode()
+        RunOptions CurrentOptions()
         {
+            RunOptions o = new RunOptions();
             ToggleSwitch[] toggles = SettingToggles();
-            bool[] on = new bool[toggles.Length];
             for (int i = 0; i < toggles.Length; i++)
             {
-                on[i] = toggles[i].On;
+                o.Toggles[i] = toggles[i].On;
             }
-            return SettingsCode.Encode(seedBox.Text.Trim(), on, Picked(encounterButtons), Picked(quantityButtons));
+            o.Seed = seedBox.Text.Trim();
+            o.Encounter = Picked(encounterButtons);
+            o.Quantity = Picked(quantityButtons);
+            for (int i = 0; i < 3; i++)
+            {
+                o.Rates[i] = rateBars[i] == null ? 4 : rateBars[i].Value;
+            }
+            return o;
+        }
+
+        // Sets every switch, choice and slider at once, then refreshes once.
+        void ApplyOptions(RunOptions o)
+        {
+            loadingState = true;
+            ToggleSwitch[] toggles = SettingToggles();
+            for (int i = 0; i < toggles.Length; i++)
+            {
+                toggles[i].On = o.Toggles[i];
+            }
+            encounterButtons[o.Encounter].Checked = true;
+            quantityButtons[o.Quantity].Checked = true;
+            for (int i = 0; i < 3; i++)
+            {
+                rateBars[i].Value = o.Rates[i];
+            }
+            seedBox.Text = o.Seed;
+            loadingState = false;
+            UpdateOptions();
+            UpdateChoices();
+            UpdateCounts();
+            UpdateCode();
         }
 
         void UpdateCode()
         {
             if (!loadingState)
             {
-                codeBox.Text = CurrentCode();
+                codeBox.Text = SettingsCode.Encode(CurrentOptions());
+                UpdatePresetButtons();
             }
         }
 
@@ -1629,30 +1918,19 @@ namespace FFRRandomizerGui
             catch (ExternalException)
             {
             }
-            string seed, error;
-            bool[] on;
-            int encounter, quantity;
-            if (!SettingsCode.TryDecode(text, out seed, out on, out encounter, out quantity, out error))
+            RunOptions o;
+            string error;
+            if (!SettingsCode.TryDecode(text, out o, out error))
             {
                 ShowSaved(text.Trim() == "" ? "Copy a settings code first, then press Paste code." : error, false);
                 return;
             }
-            loadingState = true;
-            ToggleSwitch[] toggles = SettingToggles();
             int count = 0;
-            for (int i = 0; i < toggles.Length; i++)
+            foreach (bool on in o.Toggles)
             {
-                toggles[i].On = on[i];
-                count += on[i] ? 1 : 0;
+                count += on ? 1 : 0;
             }
-            encounterButtons[encounter].Checked = true;
-            quantityButtons[quantity].Checked = true;
-            seedBox.Text = seed;
-            loadingState = false;
-            UpdateOptions();
-            UpdateChoices();
-            UpdateCounts();
-            UpdateCode();
+            ApplyOptions(o);
             ShowSaved("Loaded " + codeBox.Text + ": seed and " + count + " options set. Press Create Randomizer File to save it.", true);
         }
 
@@ -1758,7 +2036,14 @@ namespace FFRRandomizerGui
             }
             string state = Value(status, "state"), code = Value(status, "code"), seed = Value(status, "seed");
             string when = FriendlyTime(Value(status, "applied_at") != "" ? Value(status, "applied_at") : Value(status, "started"));
-            string fileCode = File.Exists(settingsPath) ? SettingsCode.FromValues(Game.ReadSettings(gameDir)) : null;
+            string fileCode = File.Exists(settingsPath) ? SettingsCode.Encode(SettingsCode.FromValues(Game.ReadSettings(gameDir))) : null;
+            // An older mod writes an older code format; compare it as this one.
+            RunOptions statusOptions;
+            string ignored;
+            if (SettingsCode.TryDecode(code, out statusOptions, out ignored))
+            {
+                code = SettingsCode.Encode(statusOptions);
+            }
             if (fileCode != code)
             {
                 bool fileNewer = fileCode != null &&
@@ -1891,6 +2176,11 @@ namespace FFRRandomizerGui
             UpdateOptions();
             PickChoice(values, "chest_quantity", quantityValues, quantityButtons);
             PickChoice(values, "encounter_rate", encounterValues, encounterButtons);
+            for (int i = 0; i < 3; i++)
+            {
+                string rate;
+                rateBars[i].Value = values.TryGetValue(SettingsCode.RateKeys[i], out rate) ? SettingsCode.RateSteps(rate) : 4;
+            }
             UpdateChoices();
             ClearSaved();
         }
@@ -1983,6 +2273,10 @@ namespace FFRRandomizerGui
                     values.Add(Game.OnOff(toggles[i].On));
                 }
                 values.Add(quantityValues[Picked(quantityButtons)]);
+                for (int i = 0; i < 3; i++)
+                {
+                    values.Add(SettingsCode.RateText(rateBars[i].Value));
+                }
                 Game.WriteSettings(gameDir, values.ToArray());
                 GuiConfig.SaveGameDir(gameDir);
                 RefreshStatus();

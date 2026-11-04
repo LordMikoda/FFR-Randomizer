@@ -20,18 +20,19 @@ It's a UE4SS Lua mod that changes the game's tables in memory while the game run
 - **Enemies (experimental, off by default):** random encounter enemies swap one-for-one with enemies of the same size, taking the level, HP, stats, EXP, Gil, drops and steals of the one they replace.
 - **Bosses (experimental, off by default):** boss fights swap bosses. The new boss keeps its own abilities and takes the replaced boss's stats and rewards. Lose-on-purpose and multi-phase fights stay put.
 - **Spoiler log:** a text file listing where everything went, with enemies and bosses by name.
-- **Sharing:** a settings code (`FFR1-0007ZQZ-49353958654`) holds the seed and every option, and a four-word seed check confirms two players got the same shuffle. The app shows whether the game applied the file and warns when the mod and app versions differ.
+- **Presets:** WoL Mode, Dark Knight Mode and True Chaos Mode set every switch in one click.
+- **Reward sliders:** EXP, Gil and MRP from 0.25x to 10x.
+- **Sharing:** a settings code (`FFR2-0631G07ZQZ-49353958654`) holds the seed and every option, and a four-word seed check confirms two players got the same shuffle. The app shows whether the game applied the file and warns when the mod and app versions differ.
 
 ## Install
-1. Install [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) for the game (a build that supports Unreal Engine 5.6).
-2. Run `FFRRandomizer-Setup.exe` from the release zip. It finds the game through Steam, installs the mod into `ue4ss\Mods\FFRRandomizer` and the FFR Randomizer app, with a Start menu shortcut.
-3. Open FFR Randomizer, pick a seed and options, then click **Create Randomizer File**.
-4. Start the game and begin a New Game.
+1. Run `FFRRandomizer-Setup.exe` from the release zip. It finds the game through Steam, installs the mod into `ue4ss\Mods\FFRRandomizer` and the FFR Randomizer app, with a Start menu shortcut. The mod needs [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) (a build for Unreal Engine 5.6); if the game has none, tick **Install UE4SS 4.0.0-rc1 too** and Setup adds the tested build (MIT license).
+2. Open FFR Randomizer, pick a preset or your own options, then click **Create Randomizer File**.
+3. Start the game and begin a New Game.
 
 Keep the same Randomizer File for the whole playthrough. Uninstall from Windows Settings > Apps > Installed apps.
 
 ### Manual install
-Copy `mod/FFRRandomizer` into `FINAL FANTASY RESONANCE\FFRS\Binaries\Win64\ue4ss\Mods\`. Without the app, the mod picks a seed on first launch and writes it to `Randomizer.txt` in that folder; edit that file to change the seed or options (`items`, `shops`, `visions`, `enemies`, `bosses`, `abilities`, `mix_physical_magic`, `finishers`, `supports`, `character_moves`, `character_finishers`, `mix_character_moves`, `character_stats`, `gear_stats`, `gear_passives`, `enemy_weaknesses`, `status_resistances`, `enemy_passives`, `random_stats`, `swap_gear_types`, `full_strength`, `shops_sell_anything`, `story_items`: `on` or `off`; `encounter_rate`: `normal`, `half` or `double`; `chest_quantity`: `default`, `9` or `50`).
+Copy `mod/FFRRandomizer` into `FINAL FANTASY RESONANCE\FFRS\Binaries\Win64\ue4ss\Mods\`. Without the app, the mod picks a seed on first launch and writes it to `Randomizer.txt` in that folder; edit that file to change the seed or options (`items`, `shops`, `visions`, `enemies`, `bosses`, `abilities`, `mix_physical_magic`, `finishers`, `supports`, `character_moves`, `character_finishers`, `mix_character_moves`, `character_stats`, `gear_stats`, `gear_passives`, `enemy_weaknesses`, `status_resistances`, `enemy_passives`, `random_stats`, `swap_gear_types`, `full_strength`, `shops_sell_anything`, `story_items`: `on` or `off`; `encounter_rate`: `normal`, `half` or `double`; `chest_quantity`: `default`, `9` or `50`; `exp_rate`, `gil_rate`, `mrp_rate`: `0.25` to `10`).
 
 ## Repository
 | Folder | What's in it |

@@ -3,7 +3,7 @@
 -- applies it in memory. Nothing on disk in the game changes, and removing this
 -- folder undoes everything.
 
-local MOD_VERSION = "0.7.0"
+local MOD_VERSION = "0.8.0"
 local LOG_PREFIX = "[FFRRandomizer] "
 local CHECK_INTERVAL_MS = 3000
 
@@ -58,11 +58,13 @@ local TABLES = {
     equipment = "/Game/Datatable/Item/DT_EquipmentItemData.DT_EquipmentItemData",
     playables = "/Game/Datatable/Unit/DT_PlayableUnitParameter.DT_PlayableUnitParameter",
     maps = "/Game/Datatable/Map/CDT_MapData_Prod.CDT_MapData_Prod",
+    difficulty = "/Game/Datatable/Difficulty/DT_GameDifficultyParam.DT_GameDifficultyParam",
 }
 -- Tables only some options need, by the setting that needs them.
 local NEEDED_BY = {
     playables = function(settings) return settings.swapGear end,
     maps = function(settings) return settings.encounterRate ~= "normal" end,
+    difficulty = function(settings) return settings.expRate ~= 1 or settings.gilRate ~= 1 or settings.mrpRate ~= 1 end,
 }
 -- Tables the plan can do without, the ones only the enemy and boss shuffles
 -- need, and the ones only the Vision ability shuffle needs.
@@ -200,10 +202,30 @@ shops_sell_anything=%s
 story_items=%s
 # default, 9 or 50. Weapons, armor and accessories always stay at 1.
 chest_quantity=%s
+# Rewards from every battle: 0.25 to 10 in steps of 0.25. 1 is the game's own.
+exp_rate=%s
+gil_rate=%s
+mrp_rate=%s
 ]]
 
 local function trim(text)
     return (text:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+-- A reward rate as the settings file writes it: 1, 2.5, 0.25.
+local function rateText(rate)
+    return string.format("%g", rate)
+end
+
+-- 0.25 to 10 in steps of 0.25; anything else is pulled to the nearest step.
+local function readRate(text, key)
+    local value = tonumber(text or "1")
+    if value == nil then
+        log("Unknown " .. key .. " '" .. tostring(text) .. "', using 1.")
+        return 1
+    end
+    value = math.floor(value * 4 + 0.5) / 4
+    return math.max(0.25, math.min(10, value))
 end
 
 local function writeSettings(settings)
@@ -221,7 +243,8 @@ local function writeSettings(settings)
         onOff(settings.gearStats), onOff(settings.gearPassives), onOff(settings.weaknesses),
         onOff(settings.statusResists), onOff(settings.enemyPassives), settings.encounterRate,
         onOff(settings.randomStats), onOff(settings.swapGear), onOff(settings.fullStrength),
-        onOff(settings.shopsAnything), onOff(settings.storyItems), settings.chestQuantity))
+        onOff(settings.shopsAnything), onOff(settings.storyItems), settings.chestQuantity,
+        rateText(settings.expRate), rateText(settings.gilRate), rateText(settings.mrpRate)))
     file:close()
 end
 
@@ -271,6 +294,9 @@ local function readSettings()
         shopsAnything = flag("shops_sell_anything", "off"),
         storyItems = flag("story_items", "off"),
         chestQuantity = (values.chest_quantity or "default"):lower(),
+        expRate = readRate(values.exp_rate, "exp_rate"),
+        gilRate = readRate(values.gil_rate, "gil_rate"),
+        mrpRate = readRate(values.mrp_rate, "mrp_rate"),
     }
     if CHEST_CAPS[settings.chestQuantity] == nil then
         log("Unknown chest_quantity '" .. settings.chestQuantity .. "', using default.")
@@ -293,11 +319,15 @@ local function readSettings()
 end
 
 -- Settings code ---------------------------------------------------------------
--- The seed and every option in one line, such as FFR1-4KQ7M2D-49353958654:
--- FFR and the format number, the options as bits in 7 Crockford base32
+-- The seed and every option in one line, such as FFR2-0631G07ZQZ-49353958654:
+-- FFR and the format number, the options as bits in 10 Crockford base32
 -- characters, then the seed as typed. Must stay in step with SettingsCode in
 -- the app. Bits 0 to 22 are the switches in CODE_TOGGLES' order, 23 and 24 the
--- encounter rate, 25 and 26 the chest quantity; 27 to 34 are free.
+-- encounter rate, 25 and 26 the chest quantity, 27 and 28 kept for trapped
+-- chests (always 0; the game's chest traps couldn't start a fight), then
+-- six bits each for the EXP, Gil and MRP rates as quarter steps above 0.25
+-- (1x is 3). Bits 47 to 49 are free. FFR1 (0.7.0) had 7 characters and no
+-- traps or rates.
 
 local CODE_TOGGLES = {
     "items", "shops", "visions", "enemies", "bosses",
@@ -318,12 +348,15 @@ local function settingsCode(settings)
         end
     end
     bits = bits | (CODE_ENCOUNTERS[settings.encounterRate] << 23) | (CODE_QUANTITIES[settings.chestQuantity] << 25)
+    for i, rate in ipairs({ settings.expRate, settings.gilRate, settings.mrpRate }) do
+        bits = bits | (math.floor(rate * 4 + 0.5) - 1) << (29 + 6 * (i - 1))
+    end
     local chars = {}
-    for i = 6, 0, -1 do
+    for i = 9, 0, -1 do
         local digit = (bits >> (5 * i)) & 31
         table.insert(chars, CODE_DIGITS:sub(digit + 1, digit + 1))
     end
-    return "FFR1-" .. table.concat(chars) .. "-" .. settings.seed
+    return "FFR2-" .. table.concat(chars) .. "-" .. settings.seed
 end
 
 -- Seeded random numbers -----------------------------------------------------
@@ -1679,9 +1712,31 @@ local function scaleEncounters(plan, settings, tables)
     log(string.format("Encounter rate: %s, %d maps changed.", settings.encounterRate, maps))
 end
 
+-- Scales EXP, Gil and MRP from every battle on every difficulty, so Expert's
+-- own 1.5x MRP stacks with the slider.
+local REWARD_FIELDS = { { "ExpRate", "expRate" }, { "MoneyRate", "gilRate" }, { "MRPointRate", "mrpRate" } }
+
+local function scaleRewards(plan, settings, tables)
+    local rows = 0
+    for _, name in ipairs(sortedRowNames(tables.difficulty)) do
+        local row = tables.difficulty:FindRow(name)
+        for _, pair in ipairs(REWARD_FIELDS) do
+            local value = row[pair[1]]
+            if type(value) == "number" then
+                addPatch(plan, "difficulty", name, pair[1], value * settings[pair[2]])
+            end
+        end
+        rows = rows + 1
+    end
+    addSpoiler(plan, "Rewards", string.format("EXP x%s, Gil x%s, MRP x%s on %d difficulties", rateText(settings.expRate),
+        rateText(settings.gilRate), rateText(settings.mrpRate), rows))
+    log(string.format("Rewards: EXP x%s, Gil x%s, MRP x%s on %d difficulties.", rateText(settings.expRate),
+        rateText(settings.gilRate), rateText(settings.mrpRate), rows))
+end
+
 local SPOILER_SECTIONS = { "Visions", "Vision abilities", "Finishers", "Characters", "Character stats",
     "Gear types", "Gear stats", "Gear passives", "Bosses", "Enemies", "Enemy weaknesses", "Status resistances",
-    "Enemy passives", "Encounter rate", "Chests", "Drops and steals", "Shops" }
+    "Enemy passives", "Encounter rate", "Rewards", "Chests", "Drops and steals", "Shops" }
 
 -- Four words hashed from the settings code and the spoiler's sections (with
 -- unit row keys, not names, so the game's language doesn't change it): two
@@ -1734,6 +1789,8 @@ local function writeSpoiler(plan, settings)
     file:write(string.format("We are Chaos: Fully random stats: %s   Swap gear types: %s   Enemies at full strength: %s   Shops sell anything: %s   Story items: %s\n",
         onOff(settings.randomStats), onOff(settings.swapGear), onOff(settings.fullStrength),
         onOff(settings.shopsAnything), onOff(settings.storyItems)))
+    file:write(string.format("Rewards: EXP x%s   Gil x%s   MRP x%s\n", rateText(settings.expRate),
+        rateText(settings.gilRate), rateText(settings.mrpRate)))
     if settings.enemies or settings.bosses then
         file:write("With enemies or bosses on, drops and steals stay with the spot: a unit's list below\n" ..
             "goes to whichever unit fights in its place.\n")
@@ -1818,6 +1875,9 @@ local function buildPlan(settings)
     if settings.encounterRate ~= "normal" then
         scaleEncounters(plan, settings, tables)
     end
+    if NEEDED_BY.difficulty(settings) then
+        scaleRewards(plan, settings, tables)
+    end
     return plan
 end
 
@@ -1868,7 +1928,9 @@ local function applyPatch(row, patch)
     if patch.sub ~= nil then
         target, key = target[key], patch.sub
     end
-    if target[key] == patch.value then
+    local current = target[key]
+    if current == patch.value or (type(current) == "number" and type(patch.value) == "number"
+            and math.abs(current - patch.value) < 1e-4) then
         return false
     end
     target[key] = patch.value

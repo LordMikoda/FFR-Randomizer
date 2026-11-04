@@ -48,6 +48,7 @@ namespace FFRRandomizerSetup
         public const string FolderName = "FINAL FANTASY RESONANCE";
         public const string ModsPath = @"FFRS\Binaries\Win64\ue4ss\Mods";
         public const string Ue4ssPath = @"FFRS\Binaries\Win64\ue4ss\UE4SS.dll";
+        public const string Win64Path = @"FFRS\Binaries\Win64";
 
         public static bool IsGame(string dir)
         {
@@ -178,6 +179,29 @@ namespace FFRRandomizerSetup
             }
         }
 
+        // A release can carry UE4SS under payload/ue4ss/, laid out like the
+        // game's Win64 folder, with its version in ue4ss/ue4ss-version.txt.
+        const string Ue4ssPrefix = "ue4ss/";
+        const string Ue4ssVersionFile = "ue4ss/ue4ss-version.txt";
+
+        public static string BundledUe4ss
+        {
+            get
+            {
+                using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(PayloadPrefix + Ue4ssVersionFile))
+                {
+                    if (stream == null)
+                    {
+                        return null;
+                    }
+                    using (StreamReader reader = new StreamReader(stream))
+                    {
+                        return reader.ReadToEnd().Trim();
+                    }
+                }
+            }
+        }
+
         static IEnumerable<string> Payload()
         {
             foreach (string name in Assembly.GetExecutingAssembly().GetManifestResourceNames())
@@ -229,11 +253,30 @@ namespace FFRRandomizerSetup
 
         // Mod files go into the game's ue4ss\Mods\FFRRandomizer. Randomizer.txt and
         // spoiler logs there aren't in the payload, so an update keeps them.
-        public static void Run(string gameDir, bool desktop)
+        public static void Run(string gameDir, bool desktop, bool ue4ss)
         {
             string modDir = Game.ModDir(gameDir);
+            // UE4SS goes in first, only when asked and missing, and every file
+            // it adds is recorded so uninstalling takes exactly those away.
+            List<string> ue4ssFiles = new List<string>();
+            if (ue4ss && !Game.HasUe4ss(gameDir) && BundledUe4ss != null)
+            {
+                foreach (string name in Payload())
+                {
+                    if (name.StartsWith(Ue4ssPrefix, StringComparison.Ordinal) && name != Ue4ssVersionFile)
+                    {
+                        string target = Path.Combine(gameDir, Game.Win64Path, name.Substring(Ue4ssPrefix.Length).Replace('/', '\\'));
+                        Extract(name, target);
+                        ue4ssFiles.Add(target);
+                    }
+                }
+            }
             foreach (string name in Payload())
             {
+                if (name.StartsWith(Ue4ssPrefix, StringComparison.Ordinal))
+                {
+                    continue;
+                }
                 if (name.StartsWith(ModPrefix, StringComparison.Ordinal))
                 {
                     Extract(name, Path.Combine(modDir, name.Substring(ModPrefix.Length).Replace('/', '\\')));
@@ -282,6 +325,63 @@ namespace FFRRandomizerSetup
                 key.SetValue("EstimatedSize", (int)(size / 1024), RegistryValueKind.DWord);
                 key.SetValue("NoModify", 1, RegistryValueKind.DWord);
                 key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+                if (ue4ssFiles.Count > 0)
+                {
+                    key.SetValue("Ue4ssFiles", ue4ssFiles.ToArray(), RegistryValueKind.MultiString);
+                    key.SetValue("Ue4ssVersion", BundledUe4ss);
+                }
+            }
+        }
+
+        // The UE4SS files this Setup installed, if it installed any.
+        public static string[] InstalledUe4ss()
+        {
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(UninstallKey))
+            {
+                return key == null ? new string[0] : (key.GetValue("Ue4ssFiles") as string[] ?? new string[0]);
+            }
+        }
+
+        // Takes away only the UE4SS files Setup put in, plus the log UE4SS
+        // writes, then any folders that are left empty. Files the player
+        // added (other mods) stay, and so do their folders.
+        static void RemoveUe4ss(string gameDir)
+        {
+            string[] files = InstalledUe4ss();
+            if (files.Length == 0)
+            {
+                return;
+            }
+            string win64 = Path.GetFullPath(Path.Combine(gameDir, Game.Win64Path)) + "\\";
+            List<string> all = new List<string>(files);
+            all.Add(Path.Combine(gameDir, Game.Win64Path, @"ue4ss\UE4SS.log"));
+            HashSet<string> folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string file in all)
+            {
+                string full = Path.GetFullPath(file);
+                if (!full.StartsWith(win64, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (File.Exists(full))
+                {
+                    MakeWritable(full);
+                    File.Delete(full);
+                }
+                for (string dir = Path.GetDirectoryName(full); dir.Length + 1 > win64.Length; dir = Path.GetDirectoryName(dir))
+                {
+                    folders.Add(dir);
+                }
+            }
+            folders.Add(Path.Combine(gameDir, Game.Win64Path, @"ue4ss\Mods"));
+            List<string> ordered = new List<string>(folders);
+            ordered.Sort((a, b) => b.Length.CompareTo(a.Length));
+            foreach (string dir in ordered)
+            {
+                if (Directory.Exists(dir) && Directory.GetFileSystemEntries(dir).Length == 0)
+                {
+                    Directory.Delete(dir);
+                }
             }
         }
 
@@ -314,6 +414,7 @@ namespace FFRRandomizerSetup
                     MakeTreeWritable(modDir);
                     Directory.Delete(modDir, true);
                 }
+                RemoveUe4ss(gameDir);
             }
             if (File.Exists(AppExe))
             {
@@ -350,6 +451,7 @@ namespace FFRRandomizerSetup
         readonly TextBox folderBox = new TextBox();
         readonly Label status = new Label();
         readonly CheckBox desktopBox = new CheckBox();
+        readonly CheckBox ue4ssBox = new CheckBox();
         readonly Button installButton = new Button();
         readonly Button closeButton = new Button();
         string gameDir = "";
@@ -407,6 +509,14 @@ namespace FFRRandomizerSetup
             desktopBox.Location = new Point(Pad, 200);
             desktopBox.Size = new Size(300, 24);
             Controls.Add(desktopBox);
+
+            ue4ssBox.Checked = true;
+            ue4ssBox.ForeColor = Theme.Text;
+            ue4ssBox.Location = new Point(Pad, 226);
+            ue4ssBox.Size = new Size(ContentWidth, 24);
+            ue4ssBox.Visible = false;
+            ue4ssBox.CheckedChanged += delegate { SetGameDir(gameDir); };
+            Controls.Add(ue4ssBox);
 
             installButton.Text = "Install";
             installButton.Location = new Point(Pad, 262);
@@ -473,11 +583,21 @@ namespace FFRRandomizerSetup
         void SetGameDir(string dir)
         {
             gameDir = dir == "" ? "" : Game.Normalize(dir);
+            ue4ssBox.Visible = false;
             folderBox.Text = gameDir == "" ? "Not found. Click Browse." : gameDir;
             if (!Game.IsGame(gameDir))
             {
                 SetStatus("Final Fantasy Resonance wasn't found. Click Browse and pick its folder.", false);
                 installButton.Enabled = false;
+            }
+            else if (!Game.HasUe4ss(gameDir) && Install.BundledUe4ss != null)
+            {
+                ue4ssBox.Text = "Install UE4SS " + Install.BundledUe4ss + " too (the build this randomizer is tested with, MIT license)";
+                ue4ssBox.Visible = !installed;
+                SetStatus(ue4ssBox.Checked
+                    ? "UE4SS isn't installed in this game folder. Setup will add it: dwmapi.dll next to the game and a ue4ss folder."
+                    : "UE4SS isn't installed in this game folder. Tick the box to install it, or install UE4SS yourself first.", ue4ssBox.Checked);
+                installButton.Enabled = ue4ssBox.Checked;
             }
             else if (!Game.HasUe4ss(gameDir))
             {
@@ -527,7 +647,7 @@ namespace FFRRandomizerSetup
             try
             {
                 Cursor = Cursors.WaitCursor;
-                Install.Run(gameDir, desktopBox.Checked);
+                Install.Run(gameDir, desktopBox.Checked, ue4ssBox.Visible && ue4ssBox.Checked);
             }
             catch (UnauthorizedAccessException)
             {
@@ -547,6 +667,7 @@ namespace FFRRandomizerSetup
             SetStatus("\u2713  Installed. Open FFR Randomizer from the Start menu to make a Randomizer File, then start a New Game.", true);
             installButton.Text = "Open FFR Randomizer";
             desktopBox.Enabled = false;
+            ue4ssBox.Enabled = false;
         }
     }
 
@@ -566,7 +687,10 @@ namespace FFRRandomizerSetup
             }
 
             if (!quiet && MessageBox.Show(
-                    "Remove FFR Randomizer?\n\nThis removes the app and the FFRRandomizer mod folder, including your Randomizer File and spoiler logs. UE4SS and the game are not touched.",
+                    "Remove FFR Randomizer?\n\nThis removes the app and the FFRRandomizer mod folder, including your Randomizer File and spoiler logs. " +
+                    (Install.InstalledUe4ss().Length > 0
+                        ? "UE4SS goes too, since Setup installed it; other mods you added stay. The game is not touched."
+                        : "UE4SS and the game are not touched."),
                     "FFR Randomizer", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
             {
                 return 1;

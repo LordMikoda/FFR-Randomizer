@@ -9,16 +9,23 @@ the mod undoes it.
 
 Install
 -------
-1. Install UE4SS for Final Fantasy Resonance (a build that supports Unreal Engine 5.6).
-2. Run FFRRandomizer-Setup.exe. It finds the game through Steam; if not, click
+1. Run FFRRandomizer-Setup.exe. It finds the game through Steam; if not, click
    Browse. It installs the mod into the game's ue4ss\Mods folder and the
-   FFR Randomizer app, with a Start menu shortcut.
-3. Open FFR Randomizer, pick a seed and options, then click Create Randomizer File.
-4. Start the game and begin a New Game.
+   FFR Randomizer app, with a Start menu shortcut. UE4SS (a build for Unreal
+   Engine 5.6) is needed; if the game has none, tick "Install UE4SS
+   4.0.0-rc1 too" and Setup adds it (MIT license, see ue4ss\LICENSE).
+2. Open FFR Randomizer, pick a preset or your own options, then click
+   Create Randomizer File.
+3. Start the game and begin a New Game.
 
 The app sorts its options into three tabs: We Are the Light (the fair
 randomizer), We must BECOME Chaos (wilder, still finishable) and We are
 Chaos (no guard rails, with a warning before the file is made).
+
+Presets set every switch in one click: WoL Mode (items, Visions and
+enemies), Dark Knight Mode (every shuffle that keeps the game's rules) and
+True Chaos Mode (everything, may be unwinnable). The Rewards sliders on the
+first tab scale EXP, Gil and MRP from 0.25x to 10x; presets leave them be.
 
 Keep the same Randomizer File for the whole playthrough. To change seeds,
 make a new file and restart the game.
@@ -28,7 +35,7 @@ Running Setup again updates the mod and keeps your Randomizer File.
 Sharing and checking a run
 --------------------------
 The settings code under the seed holds the seed and every option in one
-line, such as FFR1-0007ZQZ-49353958654. Copy sends it; Paste code loads a
+line, such as FFR2-0631G07ZQZ-49353958654. Codes from 0.7.0 (FFR1) still load. Copy sends it; Paste code loads a
 friend's code, then Create Randomizer File saves it.
 
 After the game starts, the card above Create shows whether it applied your
@@ -107,4 +114,5 @@ Open spoiler log.
 Uninstall
 ---------
 Windows Settings > Apps > Installed apps > FFR Randomizer > Uninstall.
-This removes the app and the FFRRandomizer mod folder. UE4SS stays.
+This removes the app and the FFRRandomizer mod folder. UE4SS stays, unless
+Setup installed it; then its files go too, and other mods you added stay.

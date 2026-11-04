@@ -16,7 +16,7 @@ using Microsoft.Win32;
 
 [assembly: System.Reflection.AssemblyTitle("FFR Randomizer")]
 [assembly: System.Reflection.AssemblyProduct("FFR Randomizer")]
-[assembly: System.Reflection.AssemblyVersion("0.8.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.0.1.0")]
 
 namespace FFRRandomizerGui
 {
@@ -52,7 +52,11 @@ namespace FFRRandomizerGui
     static class Game
     {
         // Kept in step with MOD_VERSION in the mod's main.lua.
-        public const string AppVersion = "1.0.0";
+        public const string AppVersion = "1.0.1";
+        // The oldest mod this app's Randomizer File fully works with. The
+        // portable app can update without Setup while the mod is at least
+        // this; raise it when the file format or the mod's options change.
+        public const string MinModVersion = "1.0.0";
         public const string SteamAppId = "3259780";
         public const string FolderName = "FINAL FANTASY RESONANCE";
         public const string ModPath = @"FFRS\Binaries\Win64\ue4ss\Mods\FFRRandomizer";
@@ -2005,7 +2009,7 @@ namespace FFRRandomizerGui
                     folderStatus.Text = "\u2713  UE4SS and the randomizer mod are installed";
                     folderStatus.ForeColor = Theme.Good;
                 }
-                else if (compared < 0)
+                else if (Game.CompareVersions(version, Game.MinModVersion) < 0)
                 {
                     folderStatus.Text = "!  Mod " + version + " installed, this app is " + Game.AppVersion + ". Run the " +
                         Game.AppVersion + " Setup, or some options won\u2019t apply.";

@@ -32,6 +32,9 @@ It's a UE4SS Lua mod that changes the game's tables in memory while the game run
 
 Keep the same Randomizer File for the whole playthrough. Uninstall from Windows Settings > Apps > Installed apps.
 
+### Portable app
+The zip also has `Portable/FFRRandomizer.exe`, the same app without an installer. It runs from anywhere once the mod is in the game, so you can update the app by swapping the exe instead of rerunning Setup. If the app says the installed mod is too old, run Setup once.
+
 ### Manual install
 Copy `mod/FFRRandomizer` into `FINAL FANTASY RESONANCE\FFRS\Binaries\Win64\ue4ss\Mods\`. Without the app, the mod picks a seed on first launch and writes it to `Randomizer.txt` in that folder; edit that file to change the seed or options (`items`, `shops`, `visions`, `enemies`, `bosses`, `abilities`, `mix_physical_magic`, `finishers`, `supports`, `character_moves`, `character_finishers`, `mix_character_moves`, `character_stats`, `gear_stats`, `gear_passives`, `enemy_weaknesses`, `status_resistances`, `enemy_passives`, `random_stats`, `swap_gear_types`, `full_strength`, `shops_sell_anything`, `story_items`: `on` or `off`; `encounter_rate`: `normal`, `half` or `double`; `chest_quantity`: `default`, `9` or `50`; `exp_rate`, `gil_rate`, `mrp_rate`: `0.25` to `10`; `music`: `off`, `shuffle` or `mixed`).
 
@@ -46,7 +49,7 @@ Copy `mod/FFRRandomizer` into `FINAL FANTASY RESONANCE\FFRS\Binaries\Win64\ue4ss
 
 Build a release:
 ```
-powershell -ExecutionPolicy Bypass -File tools/make_release.ps1 -Version 1.0.0
+powershell -ExecutionPolicy Bypass -File tools/make_release.ps1 -Version 1.0.1
 ```
 
 ## License

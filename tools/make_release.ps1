@@ -1,6 +1,6 @@
 # Builds a release: the app, then FFRRandomizer-Setup.exe with the app, README
-# and mod folder inside, then FFRRandomizer-<version>.zip holding Setup and the
-# README. Output goes to release/<version>/.
+# and mod folder inside, then FFRRandomizer-<version>.zip holding Setup, the
+# portable app (Portable\FFRRandomizer.exe) and the README. Output goes to release/<version>/.
 # Run: powershell -ExecutionPolicy Bypass -File tools/make_release.ps1 -Version 0.1.1
 # -Ue4ss is a folder laid out like the game's Win64 folder (dwmapi.dll, ue4ss\...)
 # plus ue4ss-version.txt; Setup offers to install it when a player has no UE4SS.
@@ -44,6 +44,9 @@ $zipPath = Join-Path $out "FFRRandomizer-$Version.zip"
 $zip = [System.IO.Compression.ZipFile]::Open($zipPath, "Create")
 try {
     [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $setup, "FFRRandomizer-Setup.exe")
+    # The portable app: the same exe Setup installs, for players who only
+    # need the new app over a mod that's already new enough.
+    [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, (Join-Path $payload "FFRRandomizer.exe"), "Portable/FFRRandomizer.exe")
     [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, (Join-Path $root "release\README.txt"), "README.txt")
 } finally {
     $zip.Dispose()

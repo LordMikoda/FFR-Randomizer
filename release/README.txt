@@ -38,6 +38,13 @@ make a new file and restart the game.
 
 Running Setup again updates the mod and keeps your Randomizer File.
 
+Portable app
+------------
+Portable\FFRRandomizer.exe is the same app Setup installs, on its own. Run
+it from anywhere, without installing; it needs the mod already in the game.
+To update, you can swap in the new exe instead of rerunning Setup. If the
+app says the installed mod is too old, run Setup once to update the mod.
+
 Sharing and checking a run
 --------------------------
 The settings code under the seed holds the seed and every option in one

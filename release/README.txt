@@ -52,10 +52,11 @@ line, such as FFR2-0631G07ZQZ-49353958654. Codes from 0.7.0 (FFR1) and
 0.8.0 still load. Copy sends it; Paste code loads a
 friend's code, then Create Randomizer File saves it.
 
-After the game starts, the card above Create shows whether it applied your
-file, how many changes it made and any errors, plus a seed check of four
-words. Two players with the same seed check have the same run. The card
-also says when the game is still on an older file and needs a restart.
+After the game starts, the status box at the bottom right shows whether it
+applied your file, how many changes it made and any errors, plus a seed
+check of four words. Two players with the same seed check have the same
+run. The box also says when the game is still on an older file and needs a
+restart.
 
 Enemies and bosses
 ------------------
@@ -130,3 +131,10 @@ Uninstall
 Windows Settings > Apps > Installed apps > FFR Randomizer > Uninstall.
 This removes the app and the FFRRandomizer mod folder. UE4SS stays, unless
 Setup installed it; then its files go too, and other mods you added stay.
+
+Fonts
+-----
+The app uses Outfit (Copyright 2021 The Outfit Project Authors) and
+JetBrains Mono (Copyright 2020 The JetBrains Mono Project Authors), both
+under the SIL Open Font License 1.1. The licenses are in the Licenses folder.
+All art is original; no Square Enix assets are used.

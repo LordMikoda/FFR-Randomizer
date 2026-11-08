@@ -48,6 +48,10 @@ try {
     # need the new app over a mod that's already new enough.
     [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, (Join-Path $payload "FFRRandomizer.exe"), "Portable/FFRRandomizer.exe")
     [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, (Join-Path $root "release\README.txt"), "README.txt")
+    # The app embeds these fonts; the SIL OFL asks for the license to travel with them.
+    foreach ($license in "Outfit-OFL.txt", "JetBrainsMono-OFL.txt") {
+        [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, (Join-Path $root "art\fonts\$license"), "Licenses/$license")
+    }
 } finally {
     $zip.Dispose()
 }

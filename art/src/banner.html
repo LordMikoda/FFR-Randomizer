@@ -1,0 +1,43 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+@font-face{font-family:Outfit;src:url(../fonts/Outfit-Regular.ttf);font-weight:400}
+@font-face{font-family:Outfit;src:url(../fonts/Outfit-Bold.ttf);font-weight:700}
+*{margin:0;box-sizing:border-box}
+body{background:#000;font-family:Outfit}
+.b{position:relative;overflow:hidden;color:#fff;text-shadow:calc(var(--u)*1) calc(var(--u)*1) 0 #0b0f2a,calc(var(--u)*2) calc(var(--u)*2) 0 rgba(5,8,30,.55);
+  background:radial-gradient(ellipse at var(--gx) 50%,#14205e 0%,#070a1e 45%,#03040b 80%)}
+.stars{position:absolute;inset:0}
+.cr{position:absolute}
+.win{position:absolute;border-radius:calc(var(--u)*9);
+  background:linear-gradient(160deg,#4a68cf 0%,#2a43a3 38%,#14227a 72%,#0a1356 100%);
+  border:calc(var(--u)*3) solid #e3e6ef;
+  box-shadow:inset 0 0 0 calc(var(--u)*1.5) #5c6488,0 0 0 calc(var(--u)*1.5) #000,0 calc(var(--u)*8) calc(var(--u)*30) rgba(0,0,0,.6)}
+.t{font-weight:700;line-height:1;letter-spacing:.01em;white-space:nowrap}
+.s{color:#74d9ff;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+.rule{height:calc(var(--u)*2);background:rgba(190,205,255,.35)}
+.f{font-weight:700;white-space:nowrap}
+.f i,.g i{font-style:normal;color:#74d9ff;padding:0 .45em}
+.g{color:#cdd5ee}
+.hand{position:absolute;filter:drop-shadow(2px 3px 0 rgba(0,0,0,.6))}
+</style><script src="crystal.js"></script></head><body><div id="r"></div><script>
+const q=new URLSearchParams(location.search);const W=+q.get('w'),H=+q.get('h');
+const wide=W/H>2;
+const u=wide?1:1.45;
+const hand=`<svg viewBox="0 0 34 22"><rect x="1" y="5" width="7" height="13" rx="2" fill="#c9cede" stroke="#141833" stroke-width="1.4"/><path d="M8 6 Q10 3.5 14 4 L30 4.5 Q33 5 33 7.5 Q33 10 30 10.2 L21 10.2 Q22.5 11.3 22 13 Q23.4 14.2 22.6 16 Q23.2 17.8 21.4 19 Q19 20.5 14 20 L8 18.5 Z" fill="#fbfbff" stroke="#141833" stroke-width="1.4" stroke-linejoin="round"/><path d="M15 10.2 L21 10.2 M15 13.4 L22 13.2 M15 16.4 L22.4 16.2" stroke="#8d94b3" stroke-width="1.1" fill="none" stroke-linecap="round"/></svg>`;
+// deterministic stars
+let seed=7;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+let st='';for(let i=0;i<(wide?70:140);i++){const x=rnd()*W,y=rnd()*H,r=rnd()*1.6+.4;st+=`<circle cx="${x}" cy="${y}" r="${r}" fill="#bfe6ff" opacity="${(rnd()*.5+.15).toFixed(2)}"/>`}
+const L=wide
+ ?{cs:400,cx:-4,cy:-14,wx:352,wy:52,ww:920,wh:268,pad:30,t:78,s:22,f:16.5,g:15,gx:'18%'}
+ :{cs:820,cx:20,cy:130,wx:760,wy:300,ww:1110,wh:480,pad:48,t:112,s:30,f:20,g:21,gx:'24%'};
+document.getElementById('r').innerHTML=`<div class="b" style="width:${W}px;height:${H}px;--u:${u}px;--gx:${L.gx}">
+<svg class="stars" width="${W}" height="${H}">${st}</svg>
+<img class="cr" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(crystalSVG({}))}" style="left:${L.cx}px;top:${L.cy}px;width:${L.cs}px;height:${L.cs}px">
+<div class="win" style="left:${L.wx}px;top:50%;transform:translateY(-50%);width:${L.ww}px;padding:${L.pad}px ${L.pad*1.3}px ${L.pad}px ${L.pad*2.2}px">
+  <div class="hand" style="left:${L.pad*0.45}px;top:${L.pad+L.t*0.28}px;width:${L.t*0.62}px">${hand}</div>
+  <div class="t" style="font-size:${L.t}px">FFR Randomizer</div>
+  <div class="s" style="font-size:${L.s}px;margin-top:${L.s*0.55}px">for Final Fantasy Resonance</div>
+  <div class="rule" style="margin:${L.s*0.9}px 0"></div>
+  <div class="f" style="font-size:${L.f}px">Chests<i>·</i>Drops<i>·</i>Steals<i>·</i>Shops<i>·</i>Visions<i>·</i>Abilities<i>·</i>Characters<i>·</i>Gear<i>·</i>Enemies<i>·</i>Bosses<i>·</i>Music</div>
+  <div class="g" style="font-size:${L.g}px;margin-top:${L.g*0.9}px">Seeded runs<i>·</i>Spoiler log<i>·</i>No game files changed</div>
+</div></div>`;
+</script></body></html>

@@ -44,13 +44,13 @@ Copy `mod/FFRRandomizer` into `FINAL FANTASY RESONANCE\FFRS\Binaries\Win64\ue4ss
 | `mod/FFRRandomizer` | The UE4SS mod. `Scripts/main.lua` builds and applies the seeded plan; `ItemNames.lua`, `EncounterGroups.lua`, `VisionAbilities.lua`, `CharacterMoves.lua` and `ChaosData.lua` are generated lookups. |
 | `gui` | The app (WinForms, C# 5). `build.cmd` compiles it with the compiler that ships with .NET Framework 4.8, so nothing needs installing. |
 | `installer` | `FFRRandomizer-Setup.exe`, also built with the .NET Framework compiler. |
-| `tools` | `make_release.ps1` builds a release zip; `make_art.ps1` draws the icon and banners; the Python scripts regenerate the Lua lookups from a data table export (not included). |
-| `art` | Icon and banners. |
+| `tools` | `make_release.ps1` builds a release zip; `make_art.py` renders the icon and banners from `art/src` (Python, Playwright and Pillow); the Python scripts regenerate the Lua lookups from a data table export (not included). |
+| `art` | Icon, banners, their sources in `src`, and the app's fonts in `fonts` (Outfit and JetBrains Mono, SIL Open Font License 1.1). |
 
 Build a release:
 ```
-powershell -ExecutionPolicy Bypass -File tools/make_release.ps1 -Version 1.0.1
+powershell -ExecutionPolicy Bypass -File tools/make_release.ps1 -Version 1.0.2
 ```
 
 ## License
-MIT, see [LICENSE](LICENSE). Final Fantasy Resonance and its item names belong to their owners; this project isn't affiliated with them.
+MIT, see [LICENSE](LICENSE). Final Fantasy Resonance and its item names belong to their owners; this project isn't affiliated with them. All art is original, and the bundled fonts keep their own SIL Open Font License.

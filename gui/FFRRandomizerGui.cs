@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Text;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -16,35 +17,135 @@ using Microsoft.Win32;
 
 [assembly: System.Reflection.AssemblyTitle("FFR Randomizer")]
 [assembly: System.Reflection.AssemblyProduct("FFR Randomizer")]
-[assembly: System.Reflection.AssemblyVersion("1.0.1.0")]
+[assembly: System.Reflection.AssemblyVersion("1.0.2.0")]
 
 namespace FFRRandomizerGui
 {
+    // Window geometry shared by the panels and the form, in design pixels.
+    static class MainFormSizes
+    {
+        // From a panel's edge to its window's edge.
+        public const int WinInset = 20;
+        // Below each window.
+        public const int Gap = 14;
+    }
+
+    // Colors for the menu look: blue gradient windows with a light bevel on a
+    // black ground, white text with a hard shadow and cyan labels.
     static class Theme
     {
-        public static readonly Color Ground = ColorTranslator.FromHtml("#14171f");
-        public static readonly Color Panel = ColorTranslator.FromHtml("#1c212b");
-        public static readonly Color Border = ColorTranslator.FromHtml("#2c3340");
-        public static readonly Color Text = ColorTranslator.FromHtml("#e8ebf0");
-        public static readonly Color Muted = ColorTranslator.FromHtml("#9aa3b2");
-        public static readonly Color Accent = ColorTranslator.FromHtml("#5aa9e6");
+        public static readonly Color Ground = ColorTranslator.FromHtml("#05060c");
+        public static readonly Color Panel = ColorTranslator.FromHtml("#22379a");
+        public static readonly Color Border = ColorTranslator.FromHtml("#3a4ea8");
+        public static readonly Color Text = ColorTranslator.FromHtml("#ffffff");
+        public static readonly Color Muted = ColorTranslator.FromHtml("#cdd5ee");
+        public static readonly Color Dim = ColorTranslator.FromHtml("#7480ab");
+        public static readonly Color Accent = ColorTranslator.FromHtml("#74d9ff");
         public static readonly Color AccentText = ColorTranslator.FromHtml("#0b1220");
-        public static readonly Color Button = ColorTranslator.FromHtml("#262c38");
-        public static readonly Color ButtonBorder = ColorTranslator.FromHtml("#3a4250");
-        public static readonly Color Good = ColorTranslator.FromHtml("#8fd3a8");
-        public static readonly Color GoodBack = ColorTranslator.FromHtml("#17291f");
-        public static readonly Color GoodBorder = ColorTranslator.FromHtml("#2d5a3e");
-        public static readonly Color Bad = ColorTranslator.FromHtml("#f2a3a3");
-        public static readonly Color BadBack = ColorTranslator.FromHtml("#2a1a1c");
-        public static readonly Color BadBorder = ColorTranslator.FromHtml("#6b3a3e");
-        public static readonly Color Warn = ColorTranslator.FromHtml("#f2c97d");
-        public static readonly Color WarnBack = ColorTranslator.FromHtml("#2a2416");
-        public static readonly Color WarnBorder = ColorTranslator.FromHtml("#6b5a2e");
-        public static readonly Color Knob = ColorTranslator.FromHtml("#f4f6f9");
+        public static readonly Color Shadow = ColorTranslator.FromHtml("#0b0f2a");
+        public static readonly Color ShadowSoft = ColorTranslator.FromHtml("#1a2154");
+        public static readonly Color Good = ColorTranslator.FromHtml("#9cf2b6");
+        public static readonly Color Bad = ColorTranslator.FromHtml("#ff9d9d");
+        public static readonly Color Warn = ColorTranslator.FromHtml("#ffd27a");
+        public static readonly Color Field = ColorTranslator.FromHtml("#07103f");
+        public static readonly Color Bevel = ColorTranslator.FromHtml("#e3e6ef");
+        public static readonly Color BevelInner = ColorTranslator.FromHtml("#5c6488");
+        public static readonly Color[] Window = {
+            ColorTranslator.FromHtml("#4a68cf"), ColorTranslator.FromHtml("#2a43a3"),
+            ColorTranslator.FromHtml("#14227a"), ColorTranslator.FromHtml("#0a1356") };
+        public static readonly Color[] WarningWindow = {
+            ColorTranslator.FromHtml("#9a3a52"), ColorTranslator.FromHtml("#6e2238"),
+            ColorTranslator.FromHtml("#481427"), ColorTranslator.FromHtml("#2c0a18") };
+        public static readonly Color[] ButtonFace = {
+            ColorTranslator.FromHtml("#5272d6"), ColorTranslator.FromHtml("#2b45ad"),
+            ColorTranslator.FromHtml("#22379a"), ColorTranslator.FromHtml("#132075") };
 
+        // Outfit, falling back to Segoe UI if the embedded font didn't load.
         public static Font Ui(float size, FontStyle style)
         {
+            if (FontLib.Sans != null && FontLib.Sans.IsStyleAvailable(style))
+            {
+                return new Font(FontLib.Sans, size, style, GraphicsUnit.Point);
+            }
             return new Font("Segoe UI", size, style, GraphicsUnit.Point);
+        }
+
+        // JetBrains Mono for the seed and codes, falling back to Consolas.
+        public static Font Mono(float size)
+        {
+            if (FontLib.Mono != null)
+            {
+                return new Font(FontLib.Mono, size, FontStyle.Regular, GraphicsUnit.Point);
+            }
+            return new Font("Consolas", size, FontStyle.Regular, GraphicsUnit.Point);
+        }
+    }
+
+    // The two open-licensed fonts (SIL OFL 1.1, licenses in art/fonts) come
+    // embedded in the exe. AddFontMemResourceEx makes them visible to GDI too,
+    // which TextRenderer and text boxes use; the collection alone is GDI+ only.
+    static class FontLib
+    {
+        [DllImport("gdi32.dll")]
+        static extern IntPtr AddFontMemResourceEx(IntPtr font, uint length, IntPtr reserved, ref uint count);
+
+        static readonly PrivateFontCollection fonts = new PrivateFontCollection();
+        public static readonly FontFamily Sans;
+        public static readonly FontFamily Mono;
+
+        static FontLib()
+        {
+            try
+            {
+                Load("Outfit-Regular.ttf");
+                Load("Outfit-Bold.ttf");
+                Load("JetBrainsMono-Regular.ttf");
+                foreach (FontFamily family in fonts.Families)
+                {
+                    if (family.Name == "Outfit")
+                    {
+                        Sans = family;
+                    }
+                    else if (family.Name == "JetBrains Mono")
+                    {
+                        Mono = family;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                Sans = null;
+                Mono = null;
+            }
+        }
+
+        // The memory stays allocated for the life of the app, as both font
+        // APIs require.
+        static void Load(string name)
+        {
+            using (Stream stream = typeof(FontLib).Assembly.GetManifestResourceStream("FFRRandomizerGui." + name))
+            {
+                if (stream == null)
+                {
+                    return;
+                }
+                byte[] data = new byte[stream.Length];
+                int read = 0;
+                while (read < data.Length)
+                {
+                    int got = stream.Read(data, read, data.Length - read);
+                    if (got <= 0)
+                    {
+                        break;
+                    }
+                    read += got;
+                }
+                IntPtr memory = Marshal.AllocCoTaskMem(data.Length);
+                Marshal.Copy(data, 0, memory, data.Length);
+                fonts.AddMemoryFont(memory, data.Length);
+                uint count = 0;
+                AddFontMemResourceEx(memory, (uint)data.Length, IntPtr.Zero, ref count);
+            }
         }
     }
 
@@ -52,7 +153,7 @@ namespace FFRRandomizerGui
     static class Game
     {
         // Kept in step with MOD_VERSION in the mod's main.lua.
-        public const string AppVersion = "1.0.1";
+        public const string AppVersion = "1.0.2";
         // The oldest mod this app's Randomizer File fully works with. The
         // portable app can update without Setup while the mod is at least
         // this; raise it when the file format or the mod's options change.
@@ -495,6 +596,327 @@ namespace FFRRandomizerGui
         }
     }
 
+    // Drawing shared by the menu controls: windows, fields, the pointing hand
+    // and shadowed text. Sizes are in design pixels times the scale s.
+    static class MenuArt
+    {
+        // A blue gradient window with a light beveled border and a thin black
+        // outline. colors: four gradient stops, top left to bottom right.
+        public static void DrawWindow(Graphics g, RectangleF r, float s, Color[] colors, Color edge, int radius)
+        {
+            if (r.Width < 4 || r.Height < 4)
+            {
+                return;
+            }
+            SmoothingMode mode = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float rad = radius * s;
+            using (GraphicsPath outer = Shapes.Rounded(r, rad))
+            using (Pen black = new Pen(Color.Black, 1.5f * s))
+            {
+                g.DrawPath(black, outer);
+            }
+            RectangleF fill = Inset(r, 0.75f * s);
+            using (GraphicsPath path = Shapes.Rounded(fill, rad))
+            using (LinearGradientBrush brush = new LinearGradientBrush(Inset(fill, -1), colors[0], colors[3], 70f))
+            {
+                ColorBlend blend = new ColorBlend();
+                blend.Colors = colors;
+                blend.Positions = new[] { 0f, 0.38f, 0.72f, 1f };
+                brush.InterpolationColors = blend;
+                g.FillPath(brush, path);
+            }
+            using (GraphicsPath bevel = Shapes.Rounded(Inset(r, 1.75f * s), rad - 1.5f * s))
+            using (Pen pen = new Pen(edge, 2.25f * s))
+            {
+                g.DrawPath(pen, bevel);
+            }
+            using (GraphicsPath inner = Shapes.Rounded(Inset(r, 3.4f * s), rad - 3f * s))
+            using (Pen pen = new Pen(Theme.BevelInner, 1f * s))
+            {
+                g.DrawPath(pen, inner);
+            }
+            g.SmoothingMode = mode;
+        }
+
+        // A sunken text field: dark fill, shadowed top and left, lit bottom and right.
+        public static void DrawField(Graphics g, RectangleF r, float s)
+        {
+            SmoothingMode mode = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (GraphicsPath path = Shapes.Rounded(r, 4 * s))
+            using (Brush brush = new SolidBrush(Theme.Field))
+            {
+                g.FillPath(brush, path);
+            }
+            float w = 2 * s, h = w / 2;
+            using (Pen dark = new Pen(ColorTranslator.FromHtml("#03061f"), w))
+            using (Pen light = new Pen(ColorTranslator.FromHtml("#8c94b8"), w))
+            {
+                g.DrawLines(dark, new[] { new PointF(r.Left + h, r.Bottom - 3 * s), new PointF(r.Left + h, r.Top + h), new PointF(r.Right - 3 * s, r.Top + h) });
+                g.DrawLines(light, new[] { new PointF(r.Left + 3 * s, r.Bottom - h), new PointF(r.Right - h, r.Bottom - h), new PointF(r.Right - h, r.Top + 3 * s) });
+            }
+            g.SmoothingMode = mode;
+        }
+
+        // The selected-item bar used by tabs and command items.
+        public static void DrawHighlight(Graphics g, RectangleF r, float s)
+        {
+            SmoothingMode mode = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (GraphicsPath path = Shapes.Rounded(r, 4 * s))
+            using (LinearGradientBrush brush = new LinearGradientBrush(Inset(r, -1), Color.FromArgb(64, 255, 255, 255), Color.FromArgb(16, 255, 255, 255), 90f))
+            using (Pen pen = new Pen(Color.FromArgb(96, 255, 255, 255), 1f * s))
+            {
+                g.FillPath(brush, path);
+                g.DrawPath(pen, path);
+            }
+            g.SmoothingMode = mode;
+        }
+
+        // The original pointing glove (cuff, palm, finger), drawn from a 34 x 22
+        // design. (x, y) is its top left; height is its drawn height.
+        public static void DrawHand(Graphics g, float x, float y, float height)
+        {
+            float k = height / 22f;
+            SmoothingMode mode = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            GraphicsState state = g.Save();
+            g.TranslateTransform(x, y);
+            g.ScaleTransform(k, k);
+            using (GraphicsPath palm = HandPalm())
+            {
+                // Hard shadow, offset like the text's.
+                GraphicsState shadow = g.Save();
+                g.TranslateTransform(1f, 2f);
+                using (Brush dark = new SolidBrush(Color.FromArgb(150, 0, 0, 0)))
+                {
+                    g.FillRectangle(dark, 1, 5, 7, 13);
+                    g.FillPath(dark, palm);
+                }
+                g.Restore(shadow);
+                using (Pen outline = new Pen(ColorTranslator.FromHtml("#141833"), 1.4f))
+                using (Brush cuff = new SolidBrush(ColorTranslator.FromHtml("#c9cede")))
+                using (Brush glove = new SolidBrush(ColorTranslator.FromHtml("#fbfbff")))
+                using (Pen folds = new Pen(ColorTranslator.FromHtml("#8d94b3"), 1.1f))
+                {
+                    outline.LineJoin = LineJoin.Round;
+                    folds.StartCap = folds.EndCap = LineCap.Round;
+                    using (GraphicsPath band = Shapes.Rounded(new RectangleF(1, 5, 7, 13), 2))
+                    {
+                        g.FillPath(cuff, band);
+                        g.DrawPath(outline, band);
+                    }
+                    g.FillPath(glove, palm);
+                    g.DrawPath(outline, palm);
+                    g.DrawLine(folds, 15, 10.2f, 21, 10.2f);
+                    g.DrawLine(folds, 15, 13.4f, 22, 13.2f);
+                    g.DrawLine(folds, 15, 16.4f, 22.4f, 16.2f);
+                }
+            }
+            g.Restore(state);
+            g.SmoothingMode = mode;
+        }
+
+        static GraphicsPath HandPalm()
+        {
+            GraphicsPath p = new GraphicsPath();
+            PointF at = new PointF(8, 6);
+            at = Quad(p, at, 10, 3.5f, 14, 4);
+            p.AddLine(at, new PointF(30, 4.5f));
+            at = new PointF(30, 4.5f);
+            at = Quad(p, at, 33, 5, 33, 7.5f);
+            at = Quad(p, at, 33, 10, 30, 10.2f);
+            p.AddLine(at, new PointF(21, 10.2f));
+            at = new PointF(21, 10.2f);
+            at = Quad(p, at, 22.5f, 11.3f, 22, 13);
+            at = Quad(p, at, 23.4f, 14.2f, 22.6f, 16);
+            at = Quad(p, at, 23.2f, 17.8f, 21.4f, 19);
+            at = Quad(p, at, 19, 20.5f, 14, 20);
+            p.AddLine(at, new PointF(8, 18.5f));
+            p.CloseFigure();
+            return p;
+        }
+
+        // A quadratic curve as the equivalent cubic one.
+        static PointF Quad(GraphicsPath p, PointF from, float cx, float cy, float x, float y)
+        {
+            PointF c1 = new PointF(from.X + 2f / 3f * (cx - from.X), from.Y + 2f / 3f * (cy - from.Y));
+            PointF c2 = new PointF(x + 2f / 3f * (cx - x), y + 2f / 3f * (cy - y));
+            PointF to = new PointF(x, y);
+            p.AddBezier(from, c1, c2, to);
+            return to;
+        }
+
+        // White (or colored) text with the hard two-step drop shadow.
+        public static void DrawText(Graphics g, string text, Font font, Rectangle bounds, Color color, TextFormatFlags flags, float s)
+        {
+            int one = Math.Max(1, (int)Math.Round(s));
+            Rectangle far = bounds;
+            far.Offset(2 * one, 2 * one);
+            Rectangle near = bounds;
+            near.Offset(one, one);
+            TextRenderer.DrawText(g, text, font, far, Theme.ShadowSoft, flags);
+            TextRenderer.DrawText(g, text, font, near, Theme.Shadow, flags);
+            TextRenderer.DrawText(g, text, font, bounds, color, flags);
+        }
+
+        // Paints what's behind a control (its parent's background and painting),
+        // so custom controls can have see-through corners on the gradients.
+        public static void PaintBehind(Control control, PaintEventArgs e)
+        {
+            Control parent = control.Parent;
+            if (parent == null)
+            {
+                e.Graphics.Clear(Theme.Ground);
+                return;
+            }
+            GraphicsState state = e.Graphics.Save();
+            e.Graphics.TranslateTransform(-control.Left, -control.Top);
+            Rectangle area = new Rectangle(control.Left, control.Top, control.Width, control.Height);
+            using (PaintEventArgs behind = new PaintEventArgs(e.Graphics, area))
+            {
+                Bridge.Background(parent, behind);
+                Bridge.Foreground(parent, behind);
+            }
+            e.Graphics.Restore(state);
+        }
+
+        public static RectangleF Inset(RectangleF r, float by)
+        {
+            return new RectangleF(r.X + by, r.Y + by, r.Width - 2 * by, r.Height - 2 * by);
+        }
+
+        // Control.InvokePaintBackground and InvokePaint are protected, so a
+        // control subclass passes them through for PaintBehind.
+        class Bridge : Control
+        {
+            static readonly Bridge one = new Bridge();
+            public static void Background(Control c, PaintEventArgs e) { one.InvokePaintBackground(c, e); }
+            public static void Foreground(Control c, PaintEventArgs e) { one.InvokePaint(c, e); }
+        }
+    }
+
+    // One pointing hand for the whole window, like a game menu's cursor. It
+    // moves to whatever was last focused or pointed at; host is the control
+    // that draws it and key says which of the host's rows or items.
+    static class HandCursor
+    {
+        static Control host;
+        static int key;
+
+        public static bool At(Control control, int which)
+        {
+            return host == control && key == which;
+        }
+
+        public static void Point(Control control, int which)
+        {
+            if (host == control && key == which)
+            {
+                return;
+            }
+            Control old = host;
+            host = control;
+            key = which;
+            if (old != null && !old.IsDisposed)
+            {
+                old.Invalidate();
+            }
+            if (control != null)
+            {
+                control.Invalidate();
+            }
+        }
+
+        // Moves the hand to host's row when trigger gets focus or the mouse.
+        public static void Attach(Control trigger, Control drawer, int which)
+        {
+            trigger.GotFocus += delegate { Point(drawer, which); };
+            trigger.MouseEnter += delegate { Point(drawer, which); };
+        }
+    }
+
+    // A label whose text has the menu's drop shadow. Its background shows
+    // whatever window it sits on.
+    class MenuLabel : Label
+    {
+        public MenuLabel()
+        {
+            SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.OptimizedDoubleBuffer, true);
+            BackColor = Color.Transparent;
+            ForeColor = Theme.Text;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            TextFormatFlags flags = TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix;
+            if (AutoEllipsis)
+            {
+                flags |= TextFormatFlags.EndEllipsis;
+            }
+            switch (TextAlign)
+            {
+                case ContentAlignment.TopCenter: flags |= TextFormatFlags.HorizontalCenter; break;
+                case ContentAlignment.TopRight: flags |= TextFormatFlags.Right; break;
+                case ContentAlignment.MiddleLeft: flags |= TextFormatFlags.VerticalCenter; break;
+                case ContentAlignment.MiddleCenter: flags |= TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter; break;
+                case ContentAlignment.MiddleRight: flags |= TextFormatFlags.VerticalCenter | TextFormatFlags.Right; break;
+                case ContentAlignment.BottomLeft: flags |= TextFormatFlags.Bottom; break;
+                case ContentAlignment.BottomCenter: flags |= TextFormatFlags.Bottom | TextFormatFlags.HorizontalCenter; break;
+                case ContentAlignment.BottomRight: flags |= TextFormatFlags.Bottom | TextFormatFlags.Right; break;
+            }
+            Rectangle area = new Rectangle(Padding.Left, Padding.Top, Width - Padding.Horizontal - 3, Height - Padding.Vertical - 2);
+            MenuArt.DrawText(e.Graphics, Text, Font, area, ForeColor, flags, DeviceDpi / 96f);
+        }
+    }
+
+    // A panel that paints the black ground and, when Window is set, a menu
+    // window inside its margins. Labels and plain cards on it show its gradient.
+    class WindowPanel : Panel
+    {
+        public bool Window = true;
+        // Design pixels between the panel's edges and the window's.
+        public int MarginSide = MainFormSizes.WinInset;
+        public int MarginTop = 0;
+        public int MarginBottom = MainFormSizes.Gap;
+        public Color[] Colors = Theme.Window;
+
+        public WindowPanel()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+                     ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            BackColor = Theme.Ground;
+        }
+
+        public RectangleF WindowBounds
+        {
+            get
+            {
+                float s = DeviceDpi / 96f;
+                return new RectangleF(MarginSide * s, MarginTop * s, Width - 2 * MarginSide * s,
+                    Height - (MarginTop + MarginBottom) * s);
+            }
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            e.Graphics.Clear(Theme.Ground);
+            if (Window)
+            {
+                MenuArt.DrawWindow(e.Graphics, WindowBounds, DeviceDpi / 96f, Colors, Theme.Bevel, 7);
+            }
+        }
+
+        protected override void OnScroll(ScrollEventArgs se)
+        {
+            base.OnScroll(se);
+            Invalidate(true);
+        }
+    }
+
+    // On/off as two words, like a game's config menu: the current one bright,
+    // the other dim. The hand that points at its row is drawn by the row's card.
     class ToggleSwitch : Control
     {
         bool isOn = true;
@@ -503,12 +925,13 @@ namespace FFRRandomizerGui
 
         public ToggleSwitch()
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor |
                      ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
-            Size = new Size(52, 30);
+            Size = new Size(86, 30);
             Cursor = Cursors.Hand;
             TabStop = true;
             AccessibleRole = AccessibleRole.CheckButton;
+            BackColor = Color.Transparent;
         }
 
         public bool On
@@ -544,7 +967,17 @@ namespace FFRRandomizerGui
                 On = !On;
                 e.Handled = true;
             }
+            else if (e.KeyCode == Keys.Left && !On || e.KeyCode == Keys.Right && On)
+            {
+                On = !On;
+                e.Handled = true;
+            }
             base.OnKeyDown(e);
+        }
+
+        protected override bool IsInputKey(Keys keyData)
+        {
+            return keyData == Keys.Left || keyData == Keys.Right || base.IsInputKey(keyData);
         }
 
         protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
@@ -553,58 +986,406 @@ namespace FFRRandomizerGui
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(Parent != null ? Parent.BackColor : Theme.Panel);
-            Rectangle track = new Rectangle(1, 1, Width - 3, Height - 3);
-            using (GraphicsPath path = Shapes.Rounded(track, track.Height / 2))
-            using (Brush brush = new SolidBrush(!Enabled ? Theme.Border : isOn ? Theme.Accent : Theme.ButtonBorder))
+            MenuArt.PaintBehind(this, e);
+            float s = DeviceDpi / 96f;
+            using (Font font = Theme.Ui(11f, FontStyle.Bold))
             {
-                g.FillPath(brush, path);
+                Size off = TextRenderer.MeasureText(g, "OFF", font, Size.Empty, TextFormatFlags.NoPadding);
+                Size on = TextRenderer.MeasureText(g, "ON", font, Size.Empty, TextFormatFlags.NoPadding);
+                int gap = (int)(12 * s);
+                int right = Width - (int)(4 * s);
+                int y = (Height - off.Height) / 2;
+                Rectangle offBox = new Rectangle(right - off.Width, y, off.Width + 4, off.Height + 4);
+                Rectangle onBox = new Rectangle(offBox.Left - gap - on.Width, y, on.Width + 4, on.Height + 4);
+                Color quiet = Enabled ? Theme.Dim : ColorTranslator.FromHtml("#4f5a8a");
+                TextFormatFlags flags = TextFormatFlags.NoPadding;
+                DrawWord(g, "ON", font, onBox, Enabled && isOn, quiet, flags, s);
+                DrawWord(g, "OFF", font, offBox, Enabled && !isOn, quiet, flags, s);
                 if (Focused)
                 {
-                    using (Pen pen = new Pen(Theme.Text, 1.5f))
+                    using (Pen line = new Pen(Theme.Accent, 1.5f * s))
                     {
-                        g.DrawPath(pen, path);
+                        Rectangle lit = isOn ? onBox : offBox;
+                        g.DrawLine(line, lit.Left, lit.Top + off.Height + 2 * s, lit.Left + (isOn ? on.Width : off.Width), lit.Top + off.Height + 2 * s);
                     }
                 }
             }
-            int knob = track.Height - 6;
-            int x = isOn ? track.Right - knob - 3 : track.Left + 3;
-            using (Brush brush = new SolidBrush(Enabled ? Theme.Knob : Theme.Muted))
+        }
+
+        static void DrawWord(Graphics g, string word, Font font, Rectangle box, bool lit, Color quiet, TextFormatFlags flags, float s)
+        {
+            if (lit)
             {
-                g.FillEllipse(brush, x, track.Top + 3, knob, knob);
+                MenuArt.DrawText(g, word, font, box, Theme.Text, flags, s);
+            }
+            else
+            {
+                Rectangle shade = box;
+                shade.Offset(1, 1);
+                TextRenderer.DrawText(g, word, font, shade, Theme.Shadow, flags);
+                TextRenderer.DrawText(g, word, font, box, quiet, flags);
             }
         }
 
         protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
     }
 
-    // A bordered, rounded panel, used for the input boxes and the shuffle list.
+    // A slider in a sunken groove with a small light block for its handle.
+    class MenuSlider : Control
+    {
+        int minimum, maximum = 10, value;
+        public int SmallChange = 1;
+        public int LargeChange = 5;
+
+        public event EventHandler ValueChanged;
+
+        public MenuSlider()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor |
+                     ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+            BackColor = Color.Transparent;
+            Cursor = Cursors.Hand;
+            TabStop = true;
+            AccessibleRole = AccessibleRole.Slider;
+        }
+
+        public int Minimum
+        {
+            get { return minimum; }
+            set { minimum = value; if (maximum < value) maximum = value; Value = this.value; Invalidate(); }
+        }
+
+        public int Maximum
+        {
+            get { return maximum; }
+            set { maximum = Math.Max(value, minimum); Value = this.value; Invalidate(); }
+        }
+
+        public int Value
+        {
+            get { return value; }
+            set
+            {
+                int clamped = Math.Max(minimum, Math.Min(maximum, value));
+                if (clamped == this.value)
+                {
+                    return;
+                }
+                this.value = clamped;
+                Invalidate();
+                if (ValueChanged != null)
+                {
+                    ValueChanged(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        float S { get { return DeviceDpi / 96f; } }
+
+        RectangleF Groove
+        {
+            get
+            {
+                float s = S;
+                float h = 12 * s;
+                return new RectangleF(8 * s, (Height - h) / 2, Width - 16 * s, h);
+            }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            MenuArt.PaintBehind(this, e);
+            float s = S;
+            RectangleF groove = Groove;
+            MenuArt.DrawField(g, groove, s);
+            using (Pen tick = new Pen(Color.FromArgb(72, 190, 205, 255), 1f))
+            {
+                for (int i = 1; i < 10; i++)
+                {
+                    float x = groove.Left + groove.Width * i / 10f;
+                    g.DrawLine(tick, x, groove.Top + 2 * s, x, groove.Bottom - 2 * s);
+                }
+            }
+            float span = Math.Max(1, maximum - minimum);
+            float at = groove.Left + 3 * s + (groove.Width - 6 * s) * (value - minimum) / span;
+            RectangleF thumb = new RectangleF(at - 6 * s, groove.Top - 7 * s, 12 * s, groove.Height + 14 * s);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (GraphicsPath shadow = Shapes.Rounded(new RectangleF(thumb.X + s, thumb.Y + s, thumb.Width, thumb.Height), 2 * s))
+            using (Brush dark = new SolidBrush(Color.Black))
+            {
+                g.FillPath(dark, shadow);
+            }
+            using (GraphicsPath block = Shapes.Rounded(thumb, 2 * s))
+            using (LinearGradientBrush face = new LinearGradientBrush(MenuArt.Inset(thumb, -1), Color.White, ColorTranslator.FromHtml("#b9c0d8"), 90f))
+            using (Pen edge = new Pen(Focused ? Theme.Accent : ColorTranslator.FromHtml("#0a0f30"), (Focused ? 2f : 1f) * s))
+            {
+                g.FillPath(face, block);
+                g.DrawPath(edge, block);
+            }
+        }
+
+        void SetFromX(int x)
+        {
+            RectangleF groove = Groove;
+            float usable = groove.Width - 6 * S;
+            float t = usable <= 0 ? 0 : (x - groove.Left - 3 * S) / usable;
+            Value = minimum + (int)Math.Round(Math.Max(0, Math.Min(1, t)) * (maximum - minimum));
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button == MouseButtons.Left)
+            {
+                Focus();
+                Capture = true;
+                SetFromX(e.X);
+            }
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if (Capture && e.Button == MouseButtons.Left)
+            {
+                SetFromX(e.X);
+            }
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            Capture = false;
+        }
+
+        protected override bool IsInputKey(Keys keyData)
+        {
+            switch (keyData)
+            {
+                case Keys.Left: case Keys.Right: case Keys.Up: case Keys.Down:
+                case Keys.PageUp: case Keys.PageDown: case Keys.Home: case Keys.End:
+                    return true;
+            }
+            return base.IsInputKey(keyData);
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            switch (e.KeyCode)
+            {
+                case Keys.Left: case Keys.Down: Value -= SmallChange; e.Handled = true; break;
+                case Keys.Right: case Keys.Up: Value += SmallChange; e.Handled = true; break;
+                case Keys.PageDown: Value -= LargeChange; e.Handled = true; break;
+                case Keys.PageUp: Value += LargeChange; e.Handled = true; break;
+                case Keys.Home: Value = minimum; e.Handled = true; break;
+                case Keys.End: Value = maximum; e.Handled = true; break;
+            }
+            base.OnKeyDown(e);
+        }
+
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+    }
+
+    // A small menu window as a button. Lit adds a cyan glow (presets that
+    // match). Command buttons have no window: they show the highlight bar and
+    // the hand, like the entries of a game's command menu.
+    class MenuButton : Button
+    {
+        public bool Command;
+        bool lit, hover, down;
+
+        public MenuButton()
+        {
+            SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.OptimizedDoubleBuffer |
+                     ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+            FlatStyle = FlatStyle.Flat;
+            FlatAppearance.BorderSize = 0;
+            BackColor = Color.Transparent;
+            ForeColor = Theme.Text;
+            UseVisualStyleBackColor = false;
+            Cursor = Cursors.Hand;
+            Font = Theme.Ui(11f, FontStyle.Bold);
+        }
+
+        public bool Lit
+        {
+            get { return lit; }
+            set { if (lit != value) { lit = value; Invalidate(); } }
+        }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            hover = true;
+            if (Command)
+            {
+                HandCursor.Point(this, 0);
+            }
+            Invalidate();
+            base.OnMouseEnter(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnMouseDown(MouseEventArgs e) { down = true; Invalidate(); base.OnMouseDown(e); }
+        protected override void OnMouseUp(MouseEventArgs e) { down = false; Invalidate(); base.OnMouseUp(e); }
+
+        protected override void OnGotFocus(EventArgs e)
+        {
+            // Command entries take the hand; other buttons show focus with a
+            // cyan edge, and the hand leaves so it never points somewhere stale.
+            HandCursor.Point(Command ? this : null, 0);
+            Invalidate();
+            base.OnGotFocus(e);
+        }
+
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            MenuArt.PaintBehind(this, e);
+            float s = DeviceDpi / 96f;
+            Rectangle area = ClientRectangle;
+            if (Command)
+            {
+                bool pointed = HandCursor.At(this, 0);
+                if (pointed || down)
+                {
+                    MenuArt.DrawHighlight(g, new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), s);
+                }
+                if (pointed)
+                {
+                    float hand = 22 * s;
+                    MenuArt.DrawHand(g, 6 * s, (Height - hand) / 2, hand);
+                }
+                Rectangle text = new Rectangle((int)(48 * s), 0, Width - (int)(52 * s), Height);
+                MenuArt.DrawText(g, Text, Font, text, Enabled ? ForeColor : Theme.Dim,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix, s);
+                return;
+            }
+            Color[] face = Theme.ButtonFace;
+            if (down)
+            {
+                face = new[] { face[2], face[3], face[3], face[3] };
+            }
+            else if (hover)
+            {
+                face = new[] { ColorTranslator.FromHtml("#6a88e8"), face[0], face[1], face[2] };
+            }
+            Color edge = lit || Focused ? Theme.Accent : Theme.Bevel;
+            MenuArt.DrawWindow(g, new RectangleF(1, 1, Width - 2, Height - 2), s, face, edge, 5);
+            if (lit)
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                using (GraphicsPath glow = Shapes.Rounded(MenuArt.Inset(new RectangleF(1, 1, Width - 2, Height - 2), 4 * s), 3 * s))
+                using (Pen pen = new Pen(Color.FromArgb(140, 116, 217, 255), 3f * s))
+                {
+                    g.DrawPath(pen, glow);
+                }
+            }
+            MenuArt.DrawText(g, Text, Font, new Rectangle(0, 0, Width - 2, Height - 2), Enabled ? ForeColor : Theme.Dim,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix, s);
+        }
+    }
+
+    // One option of a three-way choice: the picked one bright, the others dim,
+    // with the hand beside whichever has focus or the mouse.
+    class MenuChoice : RadioButton
+    {
+        public MenuChoice()
+        {
+            SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.OptimizedDoubleBuffer |
+                     ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+            BackColor = Color.Transparent;
+            ForeColor = Theme.Text;
+            Cursor = Cursors.Hand;
+            HandCursor.Attach(this, this, 0);
+        }
+
+        protected override void OnCheckedChanged(EventArgs e) { Invalidate(); base.OnCheckedChanged(e); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            MenuArt.PaintBehind(this, e);
+            float s = DeviceDpi / 96f;
+            if (HandCursor.At(this, 0))
+            {
+                float hand = 22 * s;
+                MenuArt.DrawHand(g, 0, (Height - hand) / 2, hand);
+            }
+            Rectangle text = new Rectangle((int)(38 * s), 0, Width - (int)(38 * s), Height);
+            TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis;
+            if (Checked)
+            {
+                MenuArt.DrawText(g, Text, Font, text, Theme.Text, flags, s);
+            }
+            else
+            {
+                Rectangle shade = text;
+                shade.Offset(1, 1);
+                TextRenderer.DrawText(g, Text, Font, shade, Theme.Shadow, flags);
+                TextRenderer.DrawText(g, Text, Font, text, Theme.Dim, flags);
+            }
+            if (Focused)
+            {
+                Size size = TextRenderer.MeasureText(g, Text, Font, Size.Empty, TextFormatFlags.NoPadding);
+                using (Pen line = new Pen(Theme.Accent, 1.5f * s))
+                {
+                    float y = (Height + size.Height) / 2f + 2 * s;
+                    g.DrawLine(line, text.Left + 6 * s, y, text.Left + 6 * s + size.Width, y);
+                }
+            }
+        }
+    }
+
+    // A see-through panel that groups rows on a window (the toggle rows, a
+    // choice's options), or, as a Field, a sunken box around a text box.
+    // It draws the hand for its rows and the lines between them.
     class Card : Panel
     {
         public int Radius = 8;
+        public bool Field;
+        public int Rows;
+        public int RowHeight = 64;
 
         public Card()
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
-                     ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-            BackColor = Theme.Panel;
+            SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.OptimizedDoubleBuffer |
+                     ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            BackColor = Color.Transparent;
         }
-
-        public Color Outline = Theme.Border;
 
         protected override void OnPaintBackground(PaintEventArgs e)
         {
-            Graphics g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(Parent != null ? Parent.BackColor : Theme.Ground);
-            Rectangle box = new Rectangle(0, 0, Width - 1, Height - 1);
-            using (GraphicsPath path = Shapes.Rounded(box, Radius))
-            using (Brush brush = new SolidBrush(BackColor))
-            using (Pen pen = new Pen(Outline))
+            MenuArt.PaintBehind(this, e);
+            if (Field)
             {
-                g.FillPath(brush, path);
-                g.DrawPath(pen, path);
+                MenuArt.DrawField(e.Graphics, new RectangleF(0, 0, Width, Height), DeviceDpi / 96f);
+            }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            Graphics g = e.Graphics;
+            float s = DeviceDpi / 96f;
+            using (Pen pen = new Pen(Color.FromArgb(48, 190, 205, 255), 1f))
+            {
+                for (int row = 1; row < Rows; row++)
+                {
+                    float y = row * RowHeight * s;
+                    g.DrawLine(pen, 0, y, Width - 1, y);
+                }
+            }
+            for (int row = 0; row < Rows; row++)
+            {
+                if (HandCursor.At(this, row))
+                {
+                    float hand = 22 * s;
+                    MenuArt.DrawHand(g, 0, row * RowHeight * s + (RowHeight * s - hand) / 2, hand);
+                }
             }
         }
     }
@@ -613,7 +1394,12 @@ namespace FFRRandomizerGui
     {
         public static GraphicsPath Rounded(Rectangle r, int radius)
         {
-            int d = Math.Max(1, Math.Min(radius * 2, Math.Min(r.Width, r.Height)));
+            return Rounded(new RectangleF(r.X, r.Y, r.Width, r.Height), radius);
+        }
+
+        public static GraphicsPath Rounded(RectangleF r, float radius)
+        {
+            float d = Math.Max(1f, Math.Min(radius * 2, Math.Min(r.Width, r.Height)));
             GraphicsPath path = new GraphicsPath();
             path.AddArc(r.Left, r.Top, d, d, 180, 90);
             path.AddArc(r.Right - d, r.Top, d, d, 270, 90);
@@ -624,8 +1410,8 @@ namespace FFRRandomizerGui
         }
     }
 
-    // A tab in the strip above the options. The selected one is a raised panel
-    // with an accent line along its bottom; the others are plain text.
+    // A tab in the command window above the options: the selected one has the
+    // highlight bar, the others are dim. The hand shows on focus or hover.
     class TabButton : Control
     {
         bool selected;
@@ -633,11 +1419,13 @@ namespace FFRRandomizerGui
 
         public TabButton()
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor |
                      ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+            BackColor = Color.Transparent;
             Cursor = Cursors.Hand;
             TabStop = true;
             AccessibleRole = AccessibleRole.PageTab;
+            HandCursor.Attach(this, this, 0);
         }
 
         public bool Selected
@@ -675,50 +1463,43 @@ namespace FFRRandomizerGui
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(Parent != null ? Parent.BackColor : Theme.Ground);
+            MenuArt.PaintBehind(this, e);
             float s = DeviceDpi / 96f;
             if (selected)
             {
-                // Rounded at the top only: the shape runs past the bottom edge.
-                Rectangle shape = new Rectangle(0, 0, Width - 1, Height + (int)(10 * s));
-                using (GraphicsPath path = Shapes.Rounded(shape, (int)(8 * s)))
-                using (Brush fill = new SolidBrush(Theme.Panel))
-                using (Pen edge = new Pen(Focused ? Theme.Text : Theme.Border))
-                {
-                    g.FillPath(fill, path);
-                    g.DrawPath(edge, path);
-                }
-                using (Brush accent = new SolidBrush(Theme.Accent))
-                {
-                    g.FillRectangle(accent, 0, Height - 3 * s, Width, 3 * s);
-                }
+                MenuArt.DrawHighlight(g, new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), s);
             }
-            else
-            {
-                using (Pen line = new Pen(Focused ? Theme.Muted : Theme.Border))
-                {
-                    g.DrawLine(line, 0, Height - 1, Width, Height - 1);
-                    if (Focused)
-                    {
-                        g.DrawRectangle(line, 0, 0, Width - 1, Height - 2);
-                    }
-                }
-            }
-            using (Font name = Theme.Ui(10.5f, selected ? FontStyle.Bold : FontStyle.Regular))
+            bool pointed = HandCursor.At(this, 0);
+            using (Font name = Theme.Ui(12f, FontStyle.Bold))
             using (Font small = Theme.Ui(9f, FontStyle.Regular))
             {
                 Size nameSize = TextRenderer.MeasureText(g, Text, name, Size.Empty, TextFormatFlags.NoPadding);
                 Size countSize = TextRenderer.MeasureText(g, count, small, Size.Empty, TextFormatFlags.NoPadding);
                 int gap = (int)(8 * s);
-                bool showCount = nameSize.Width + gap + countSize.Width + (int)(16 * s) <= Width;
-                int x = (Width - nameSize.Width - (showCount ? gap + countSize.Width : 0)) / 2;
+                int handRoom = pointed ? (int)(40 * s) : 0;
+                bool showCount = nameSize.Width + gap + countSize.Width + handRoom + (int)(16 * s) <= Width;
+                int textWidth = nameSize.Width + (showCount ? gap + countSize.Width : 0);
+                int x = Math.Max(handRoom + (int)(4 * s), (Width - textWidth) / 2);
                 int y = (Height - nameSize.Height) / 2;
-                TextRenderer.DrawText(g, Text, name, new Point(x, y), selected ? Theme.Text : Theme.Muted, TextFormatFlags.NoPadding);
+                if (pointed)
+                {
+                    float hand = 20 * s;
+                    MenuArt.DrawHand(g, x - 38 * s, (Height - hand) / 2, hand);
+                }
+                Rectangle nameBox = new Rectangle(x, y, Math.Min(nameSize.Width + 4, Width - x), nameSize.Height + 4);
+                if (selected)
+                {
+                    MenuArt.DrawText(g, Text, name, nameBox, Theme.Text, TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis, s);
+                }
+                else
+                {
+                    TextRenderer.DrawText(g, Text, name, new Rectangle(nameBox.X + 1, nameBox.Y + 1, nameBox.Width, nameBox.Height), Theme.Shadow, TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+                    TextRenderer.DrawText(g, Text, name, nameBox, Theme.Dim, TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+                }
                 if (showCount)
                 {
-                    TextRenderer.DrawText(g, count, small, new Point(x + nameSize.Width + gap, y + nameSize.Height - countSize.Height),
-                        Theme.Muted, TextFormatFlags.NoPadding);
+                    TextRenderer.DrawText(g, count, small, new Point(x + nameSize.Width + gap, y + nameSize.Height - countSize.Height - (int)(2 * s)),
+                        selected ? Theme.Accent : Theme.Dim, TextFormatFlags.NoPadding);
                 }
             }
         }
@@ -757,25 +1538,47 @@ namespace FFRRandomizerGui
 
     class MainForm : Form
     {
-        const int Pad = 20;
+        // Content sits Pad from a section's edge: the window's inset plus the
+        // window's own padding.
+        const int WinInset = MainFormSizes.WinInset;
+        const int WinPad = 14;
+        const int Pad = WinInset + WinPad;
         const int ContentWidth = 520;
         const int HeaderHeight = 52;
-        // The apply status (or a saved message over it) and the buttons.
-        const int FooterHeight = 160;
+        // A footer window (the commands or the status box) and the gap under it.
+        const int FooterWindow = 112;
+        const int FooterRow = FooterWindow + MainFormSizes.Gap;
         // Space above the game folder and seed, the tab strip under them, and
         // the space above and below a tab's options.
-        const int TopGap = 14;
-        const int StripHeight = 54;
-        const int ContentTop = 10;
-        const int ContentBottom = 10;
-        // Two columns need this much width.
-        const int TwoColumnWidth = 2 * ContentWidth + 3 * Pad;
+        const int TopGap = 4;
+        const int StripHeight = 50 + MainFormSizes.Gap;
+        const int ContentTop = 0;
+        const int ContentBottom = 0;
+        // Two columns of sections, whose windows share the gap between them.
+        const int SectionWidth = ContentWidth + 2 * Pad;
+        const int TwoColumnWidth = 2 * SectionWidth - WinInset;
+
+        // In one column the two command entries share a line, so their window
+        // is shorter.
+        const int NarrowCommandRow = 40 + 24 + MainFormSizes.Gap;
+
+        // The footer: the commands beside (or above) the status box.
+        static int FooterHeight(int columns)
+        {
+            return columns == 2 ? FooterRow : NarrowCommandRow + FooterRow;
+        }
 
         Panel folderSection;
         Panel seedSection;
         // The settings code, the whole width under the folder and seed.
         Panel codeSection;
-        readonly Panel strip = new Panel();
+        // The folder and seed, then code and presets, in design pixels.
+        int topHeight;
+        readonly WindowPanel strip = new WindowPanel();
+        readonly WindowPanel commandWindow = new WindowPanel();
+        readonly WindowPanel statusWindow = new WindowPanel();
+        readonly MenuButton spoilerButton = new MenuButton();
+        readonly Label checkKey = new MenuLabel();
         // The current tab's options. It scrolls when the window is too short.
         readonly Panel body = new Panel();
         readonly List<OptionTab> tabs = new List<OptionTab>();
@@ -789,7 +1592,7 @@ namespace FFRRandomizerGui
         Control target;
 
         readonly TextBox folderBox = new TextBox();
-        readonly Label folderStatus = new Label();
+        readonly Label folderStatus = new MenuLabel();
         readonly TextBox seedBox = new TextBox();
         readonly ToggleSwitch itemsToggle = new ToggleSwitch();
         readonly ToggleSwitch shopsToggle = new ToggleSwitch();
@@ -816,29 +1619,28 @@ namespace FFRRandomizerGui
         readonly ToggleSwitch storyItemsToggle = new ToggleSwitch();
         readonly RadioButton[] encounterButtons = new RadioButton[3];
         readonly string[] encounterValues = { "normal", "half", "double" };
-        readonly Label encounterHelp = new Label();
+        readonly Label encounterHelp = new MenuLabel();
         readonly RadioButton[] quantityButtons = new RadioButton[3];
         readonly string[] quantityValues = { "default", "9", "50" };
-        readonly Label quantityHelp = new Label();
+        readonly Label quantityHelp = new MenuLabel();
         readonly RadioButton[] musicButtons = new RadioButton[3];
         readonly string[] musicValues = { "off", "shuffle", "mixed" };
-        readonly Label musicHelp = new Label();
+        readonly Label musicHelp = new MenuLabel();
         // EXP, Gil and MRP in quarter steps, 1 (0.25x) to 40 (10x).
-        readonly TrackBar[] rateBars = new TrackBar[3];
+        readonly MenuSlider[] rateBars = new MenuSlider[3];
         readonly Label[] rateLabels = new Label[3];
         // WoL Mode, Dark Knight Mode, True Chaos Mode, beside the settings code.
         Panel presetSection;
-        readonly Button[] presetButtons = new Button[3];
+        readonly MenuButton[] presetButtons = new MenuButton[3];
         readonly TextBox codeBox = new TextBox();
         readonly Card savedCard = new Card();
-        readonly Label savedText = new Label();
-        readonly Card statusCard = new Card();
-        readonly Label statusTitle = new Label();
-        readonly Label statusDetail = new Label();
-        readonly Label statusCheck = new Label();
+        readonly Label savedText = new MenuLabel();
+        readonly Label statusTitle = new MenuLabel();
+        readonly Label statusDetail = new MenuLabel();
+        readonly Label statusCheck = new MenuLabel();
         bool loadingState;
         DateTime statusWritten;
-        readonly Button createButton = new Button();
+        readonly MenuButton createButton = new MenuButton();
         readonly Random random = new Random();
         string gameDir = "";
 
@@ -865,7 +1667,7 @@ namespace FFRRandomizerGui
             seedSection = BuildSection(BuildSeed);
             codeSection = BuildSection(BuildCode);
             presetSection = BuildSection(BuildPresets);
-            foreach (Button button in presetButtons)
+            foreach (MenuButton button in presetButtons)
             {
                 button.Anchor = AnchorStyles.Top | AnchorStyles.Left;
             }
@@ -876,19 +1678,19 @@ namespace FFRRandomizerGui
             {
                 content = Math.Max(content, tab.ContentHeight(2));
             }
-            fullHeight = HeaderHeight + 1 + TopGap + Math.Max(folderSection.Height, seedSection.Height) + codeSection.Height
-                + StripHeight + ContentTop + content + ContentBottom + FooterHeight;
+            topHeight = Math.Max(folderSection.Height, seedSection.Height) + Math.Max(codeSection.Height, presetSection.Height);
+            fullHeight = HeaderHeight + TopGap + topHeight + StripHeight + ContentTop + content + ContentBottom + FooterHeight(2);
 
             // Built at the one-column width so every anchor measures from the
             // design layout, then widened to two columns.
             target = this;
-            ClientSize = new Size(ContentWidth + 2 * Pad, fullHeight);
+            ClientSize = new Size(SectionWidth, fullHeight);
             BuildHeader();
-            BuildFooter();
             foreach (Control control in Controls)
             {
-                Stretch(control, control.Top >= fullHeight - FooterHeight ? AnchorStyles.Bottom : AnchorStyles.Top);
+                Stretch(control, AnchorStyles.Top);
             }
+            BuildFooter();
             Controls.Add(folderSection);
             Controls.Add(seedSection);
             Controls.Add(codeSection);
@@ -916,7 +1718,7 @@ namespace FFRRandomizerGui
         void BuildTabs()
         {
             OptionTab light = AddTab("We Are the Light");
-            light.Wide.Add(BuildSection(y => AddNote("The randomizer as intended: everything shuffles, every character and " +
+            light.Wide.Add(BuildSection(false, y => AddNote("The randomizer as intended: everything shuffles, every character and " +
                 "Vision stays playable, and the story can always be finished.", y)));
             light.Left.Add(BuildSection(BuildShuffles));
             light.Left.Add(BuildSection(y => BuildChoice("Chest quantity", y, new[] { "Default", "Up to 9", "Up to 50" },
@@ -934,7 +1736,7 @@ namespace FFRRandomizerGui
             light.Toggles.AddRange(new[] { itemsToggle, shopsToggle, visionsToggle, enemiesToggle, bossesToggle });
 
             OptionTab become = AddTab("We must BECOME Chaos");
-            become.Wide.Add(BuildSection(y => AddNote("Wilder, still finishable. Builds stop making sense, but nothing is " +
+            become.Wide.Add(BuildSection(false, y => AddNote("Wilder, still finishable. Builds stop making sense, but nothing is " +
                 "taken away for good.", y)));
             become.Left.Add(BuildSection(y => AddToggles(become, "Visions and characters", y,
                 Row("Mix Physical and Magic", "Vision abilities come from all 26 Visions.", mixToggle),
@@ -951,8 +1753,8 @@ namespace FFRRandomizerGui
                 encounterButtons, encounterHelp)));
 
             OptionTab chaos = AddTab("We are Chaos");
-            chaos.Wide.Add(BuildSection(y => AddNote("No guard rails. All off by default.", y)));
-            chaos.Wide.Add(BuildSection(BuildChaosWarning));
+            chaos.Wide.Add(BuildSection(false, y => AddNote("No guard rails. All off by default.", y)));
+            chaos.Wide.Add(BuildSection(BuildChaosWarning, Theme.WarningWindow));
             chaos.Left.Add(BuildSection(y => AddToggles(chaos, "Characters and gear", y,
                 Row("Fully random stats", "Every stat curve, HP and MP too, comes from anyone. No budget.", randomStatsToggle),
                 Row("Swap gear types", "Characters trade weapon and armor types. Rain might use a bow.", swapGearToggle))));
@@ -991,22 +1793,14 @@ namespace FFRRandomizerGui
             return tab;
         }
 
-        // The tab buttons sit along the bottom of the strip, over a dividing line.
+        // The tab buttons sit in a window of their own, like a command menu.
         void BuildStrip()
         {
-            strip.BackColor = Theme.Ground;
-            strip.Size = new Size(ContentWidth + 2 * Pad, StripHeight);
+            strip.Size = new Size(SectionWidth, StripHeight);
             foreach (OptionTab tab in tabs)
             {
                 strip.Controls.Add(tab.Button);
             }
-            strip.Paint += delegate(object sender, PaintEventArgs e)
-            {
-                using (Pen line = new Pen(Theme.Border))
-                {
-                    e.Graphics.DrawLine(line, 0, strip.Height - 1, strip.Width, strip.Height - 1);
-                }
-            };
             Controls.Add(strip);
         }
 
@@ -1034,13 +1828,44 @@ namespace FFRRandomizerGui
 
         // One section of settings in its own panel, laid out at the design
         // width with the usual side margins, so its controls keep their places.
+        // A windowed section draws its menu window around its content, 12 px
+        // of padding above and below it.
         Panel BuildSection(Func<int, int> build)
         {
-            Panel panel = new Panel();
-            panel.BackColor = Theme.Ground;
-            panel.Width = ContentWidth + 2 * Pad;
+            return BuildSection(true, build, Theme.Window);
+        }
+
+        Panel BuildSection(Func<int, int> build, Color[] colors)
+        {
+            return BuildSection(true, build, colors);
+        }
+
+        Panel BuildSection(bool window, Func<int, int> build)
+        {
+            return BuildSection(window, build, Theme.Window);
+        }
+
+        Panel BuildSection(bool window, Func<int, int> build, Color[] colors)
+        {
+            WindowPanel panel = new WindowPanel();
+            panel.Window = window;
+            panel.Colors = colors;
+            panel.Width = SectionWidth;
             target = panel;
-            panel.Height = build(0);
+            int built = build(window ? 14 : 0);
+            if (window)
+            {
+                int bottom = 0;
+                foreach (Control control in panel.Controls)
+                {
+                    bottom = Math.Max(bottom, control.Bottom);
+                }
+                panel.Height = bottom + 12 + MainFormSizes.Gap;
+            }
+            else
+            {
+                panel.Height = built;
+            }
             foreach (Control control in panel.Controls)
             {
                 Stretch(control, AnchorStyles.Top);
@@ -1071,8 +1896,10 @@ namespace FFRRandomizerGui
 
         // Two columns when the window is wide enough, otherwise one: the game
         // folder and seed side by side or stacked, then the tab strip, then the
-        // current tab's options, which stretch to the column width. The window
-        // can't grow taller than the tallest tab needs.
+        // current tab's options, which stretch to the column width, then the
+        // commands and the status box. The window can't grow taller than the
+        // tallest tab needs. Side by side, two sections overlap by the window
+        // inset, so their windows share one gap.
         void LayOut()
         {
             if (layingOut || current == null || folderSection == null)
@@ -1080,44 +1907,59 @@ namespace FFRRandomizerGui
                 return;
             }
             layingOut = true;
-            // The Create button is built 48 px tall, so it gives the scale.
-            float s = createButton.Height / 48f;
-            int pad = (int)Math.Round(Pad * s);
+            // The strip is built StripHeight tall and only the form's scaling
+            // changes it, so it gives the scale the controls are at.
+            float s = strip.Height / (float)StripHeight;
+            int inset = (int)Math.Round(WinInset * s);
             int width = ClientSize.Width;
             int columns = width >= (int)(TwoColumnWidth * s) ? 2 : 1;
-            int column = (width - pad * (columns + 1)) / columns;
-            int y = (int)Math.Round((HeaderHeight + 1 + TopGap) * s);
+            int column = columns == 2 ? (width + inset) / 2 : width;
+            int second = column - inset;
+            int y = (int)Math.Round((HeaderHeight + TopGap) * s);
             if (columns == 2)
             {
-                folderSection.SetBounds(0, y, column + 2 * pad, folderSection.Height);
-                seedSection.SetBounds(column + pad, y, column + 2 * pad, seedSection.Height);
+                folderSection.SetBounds(0, y, column, folderSection.Height);
+                seedSection.SetBounds(second, y, width - second, seedSection.Height);
                 y += Math.Max(folderSection.Height, seedSection.Height);
-            }
-            else
-            {
-                folderSection.SetBounds(0, y, width, folderSection.Height);
-                y += folderSection.Height;
-                seedSection.SetBounds(0, y, width, seedSection.Height);
-                y += seedSection.Height;
-            }
-            if (columns == 2)
-            {
-                codeSection.SetBounds(0, y, column + 2 * pad, codeSection.Height);
-                presetSection.SetBounds(column + pad, y, column + 2 * pad, presetSection.Height);
+                codeSection.SetBounds(0, y, column, codeSection.Height);
+                presetSection.SetBounds(second, y, width - second, presetSection.Height);
                 y += Math.Max(codeSection.Height, presetSection.Height);
             }
             else
             {
-                codeSection.SetBounds(0, y, width, codeSection.Height);
-                y += codeSection.Height;
-                presetSection.SetBounds(0, y, width, presetSection.Height);
-                y += presetSection.Height;
+                foreach (Panel section in new[] { folderSection, seedSection, codeSection, presetSection })
+                {
+                    section.SetBounds(0, y, width, section.Height);
+                    y += section.Height;
+                }
             }
             strip.SetBounds(0, y, width, strip.Height);
-            LayOutTabButtons(s, pad, width);
+            LayOutTabButtons(s, width);
             y += strip.Height;
-            int footerTop = ClientSize.Height - (int)Math.Round(FooterHeight * s);
+            int footer = (int)Math.Round(FooterHeight(columns) * s);
+            int footerTop = ClientSize.Height - footer;
             body.SetBounds(0, y, width, Math.Max(0, footerTop - y));
+            int row = (int)Math.Round(FooterRow * s);
+            int entryLeft = (int)Math.Round((WinInset + 8) * s);
+            int entryHeight = (int)Math.Round(40 * s);
+            if (columns == 2)
+            {
+                commandWindow.SetBounds(0, footerTop, column, row);
+                statusWindow.SetBounds(second, footerTop, width - second, row);
+                int entryWidth = column - 2 * entryLeft;
+                createButton.SetBounds(entryLeft, (int)Math.Round(12 * s), entryWidth, entryHeight);
+                spoilerButton.SetBounds(entryLeft, (int)Math.Round(56 * s), entryWidth, entryHeight);
+            }
+            else
+            {
+                int narrow = (int)Math.Round(NarrowCommandRow * s);
+                commandWindow.SetBounds(0, footerTop, width, narrow);
+                statusWindow.SetBounds(0, footerTop + narrow, width, row);
+                int half = (width - 2 * entryLeft - (int)Math.Round(8 * s)) / 2;
+                createButton.SetBounds(entryLeft, (int)Math.Round(12 * s), half + (int)Math.Round(30 * s), entryHeight);
+                spoilerButton.SetBounds(createButton.Right + (int)Math.Round(8 * s), (int)Math.Round(12 * s),
+                    width - entryLeft - createButton.Right - (int)Math.Round(8 * s), entryHeight);
+            }
 
             int top = (int)Math.Round(ContentTop * s);
             int bottom = (int)Math.Round(ContentBottom * s);
@@ -1128,7 +1970,8 @@ namespace FFRRandomizerGui
             {
                 available -= SystemInformation.VerticalScrollBarWidth;
             }
-            int inner = (available - pad * (columns + 1)) / columns;
+            int inner = columns == 2 ? (available + inset) / 2 : available;
+            int right = columns == 2 ? inner - inset : 0;
             // Resuming layout afterwards makes the body measure its scroll area again.
             body.SuspendLayout();
             body.AutoScrollMargin = new Size(0, bottom);
@@ -1142,14 +1985,14 @@ namespace FFRRandomizerGui
             int[] tops = { at, at };
             foreach (Panel section in current.Left)
             {
-                section.SetBounds(0, tops[0] + scroll, inner + 2 * pad, section.Height);
+                section.SetBounds(0, tops[0] + scroll, inner, section.Height);
                 tops[0] += section.Height;
             }
-            int right = columns == 2 ? 1 : 0;
+            int side = columns == 2 ? 1 : 0;
             foreach (Panel section in current.Right)
             {
-                section.SetBounds(right * (inner + pad), tops[right] + scroll, inner + 2 * pad, section.Height);
-                tops[right] += section.Height;
+                section.SetBounds(right, tops[side] + scroll, available - right, section.Height);
+                tops[side] += section.Height;
             }
             body.ResumeLayout(true);
             if (loaded)
@@ -1159,26 +2002,29 @@ namespace FFRRandomizerGui
                 {
                     tallest = Math.Max(tallest, tab.ContentHeight(columns));
                 }
-                int needed = body.Top + top + tallest + bottom + (int)Math.Round(FooterHeight * s) + Height - ClientSize.Height;
+                int needed = body.Top + top + tallest + bottom + footer + Height - ClientSize.Height;
                 MaximumSize = new Size(MaximumSize.Width, Math.Max(needed, MinimumSize.Height));
             }
             layingOut = false;
         }
 
+        // The tabs share the strip window's width in these proportions.
         static readonly int[] TabWidths = { 220, 280, 190 };
 
-        void LayOutTabButtons(float s, int pad, int width)
+        void LayOutTabButtons(float s, int width)
         {
-            int gap = (int)Math.Round(4 * s);
-            int height = (int)Math.Round(44 * s);
+            int gap = (int)Math.Round(6 * s);
+            int edge = (int)Math.Round((WinInset + 8) * s);
+            int top = (int)Math.Round(7 * s);
+            int height = (int)Math.Round(36 * s);
             float total = 0;
-            foreach (int w in TabWidths) total += w * s;
-            float fit = Math.Min(1f, (width - 2 * pad - gap * (tabs.Count - 1)) / total);
-            int x = pad;
+            foreach (int w in TabWidths) total += w;
+            float room = width - 2 * edge - gap * (tabs.Count - 1);
+            int x = edge;
             for (int i = 0; i < tabs.Count; i++)
             {
-                int w = (int)(TabWidths[i] * s * fit);
-                tabs[i].Button.SetBounds(x, strip.Height - height, w, height);
+                int w = i == tabs.Count - 1 ? width - edge - x : (int)(room * TabWidths[i] / total);
+                tabs[i].Button.SetBounds(x, top, w, height);
                 x += w + gap;
             }
         }
@@ -1214,12 +2060,12 @@ namespace FFRRandomizerGui
             int frameWidth = Width - ClientSize.Width;
             int frameHeight = Height - ClientSize.Height;
             float s = DeviceDpi / 96f;
-            int narrow = (int)Math.Round((ContentWidth + 2 * Pad) * s) + frameWidth;
+            int narrow = (int)Math.Round(SectionWidth * s) + frameWidth;
             if (Width > area.Width)
             {
                 Width = narrow;
             }
-            int shortest = (int)Math.Round((HeaderHeight + TopGap + 104 + CodeHeight + StripHeight + 160 + FooterHeight) * s)
+            int shortest = (int)Math.Round((HeaderHeight + TopGap + topHeight + StripHeight + 160 + FooterHeight(2)) * s)
                 + frameHeight;
             MinimumSize = new Size(narrow, Math.Min(shortest, area.Height));
             MaximumSize = new Size((int)Math.Round(TwoColumnWidth * s * 1.4f) + frameWidth, SystemInformation.MaxWindowTrackSize.Height);
@@ -1234,76 +2080,59 @@ namespace FFRRandomizerGui
             Invalidate();
         }
 
+        // The app's crystal icon beside the title.
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
-            Graphics g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
+            if (Icon == null)
+            {
+                return;
+            }
             float s = DeviceDpi / 96f;
-            using (Pen line = new Pen(Theme.Border))
+            int size = (int)Math.Round(32 * s);
+            using (Icon mark = new Icon(Icon, new Size(size, size)))
             {
-                g.DrawLine(line, 0, 52 * s, ClientSize.Width, 52 * s);
-                float footerTop = ClientSize.Height - FooterHeight * s;
-                g.DrawLine(line, 0, footerTop, ClientSize.Width, footerTop);
+                e.Graphics.DrawIcon(mark, new Rectangle((int)Math.Round(WinInset * s), (int)Math.Round(10 * s), size, size));
             }
-            // Crystal mark beside the title.
-            using (Pen pen = new Pen(Theme.Accent, 1.8f * s))
-            {
-                pen.LineJoin = LineJoin.Round;
-                PointF[] gem = { P(31, 16, s), P(38, 23, s), P(31, 36, s), P(24, 23, s) };
-                g.DrawPolygon(pen, gem);
-                g.DrawLine(pen, P(24, 23, s), P(38, 23, s));
-                g.DrawLine(pen, P(31, 16, s), P(31, 36, s));
-            }
-        }
-
-        static PointF P(float x, float y, float s)
-        {
-            return new PointF(x * s, y * s);
         }
 
         Label AddLabel(string text, int x, int y, int width, Font font, Color color)
         {
-            Label label = new Label();
+            Label label = new MenuLabel();
             label.Text = text;
             label.Location = new Point(x, y);
             label.Size = new Size(width, font.Height + 4);
             label.Font = font;
             label.ForeColor = color;
-            label.BackColor = Color.Transparent;
             target.Controls.Add(label);
             return label;
         }
 
         Label AddHeading(string text, int y)
         {
-            return AddLabel(text.ToUpperInvariant(), Pad, y, ContentWidth, Theme.Ui(9f, FontStyle.Bold), Theme.Muted);
+            return AddLabel(text.ToUpperInvariant(), Pad, y, ContentWidth, Theme.Ui(9.5f, FontStyle.Bold), Theme.Accent);
         }
 
-        Button MakeButton(string text, int x, int y, int width, int height)
+        MenuButton MakeButton(string text, int x, int y, int width, int height)
         {
-            Button button = new Button();
+            MenuButton button = new MenuButton();
             button.Text = text;
             button.Location = new Point(x, y);
             button.Size = new Size(width, height);
-            button.FlatStyle = FlatStyle.Flat;
-            button.FlatAppearance.BorderColor = Theme.ButtonBorder;
-            button.FlatAppearance.MouseOverBackColor = Theme.ButtonBorder;
-            button.BackColor = Theme.Button;
-            button.ForeColor = Theme.Text;
-            button.Cursor = Cursors.Hand;
             target.Controls.Add(button);
             return button;
         }
 
-        // A text box inside a rounded card, so it matches the mockup's 44 px fields.
+        // A text box inside a sunken field, 44 px tall.
         Card AddInput(TextBox box, int x, int y, int width, Font font)
         {
             Card card = new Card();
+            card.Field = true;
             card.Location = new Point(x, y);
             card.Size = new Size(width, 44);
             box.BorderStyle = BorderStyle.None;
-            box.BackColor = Theme.Panel;
+            box.BackColor = Theme.Field;
+            box.GotFocus += delegate { HandCursor.Point(null, 0); };
             box.ForeColor = Theme.Text;
             box.Font = font;
             box.Location = new Point(12, (44 - font.Height) / 2);
@@ -1316,8 +2145,8 @@ namespace FFRRandomizerGui
 
         void BuildHeader()
         {
-            AddLabel("FFR Randomizer", 48, 14, 300, Theme.Ui(12.5f, FontStyle.Bold), Theme.Text);
-            Label version = AddLabel("v" + Game.AppVersion, 440, 17, 100, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
+            AddLabel("FFR Randomizer", WinInset + 42, 13, 300, Theme.Ui(15f, FontStyle.Bold), Theme.Text);
+            Label version = AddLabel("v" + Game.AppVersion, Pad + ContentWidth - 86, 18, 100, Theme.Ui(10f, FontStyle.Regular), Theme.Accent);
             version.TextAlign = ContentAlignment.TopRight;
         }
 
@@ -1328,12 +2157,11 @@ namespace FFRRandomizerGui
             folderBox.ReadOnly = true;
             folderBox.TabStop = false;
             folderBox.AccessibleName = "Game folder";
-            Button browse = MakeButton("Browse", 452, y + 22, 88, 44);
+            MenuButton browse = MakeButton("Browse", Pad + 432, y + 22, 88, 44);
             browse.Click += delegate { BrowseForGame(); };
             folderStatus.Location = new Point(Pad, y + 72);
             folderStatus.Size = new Size(ContentWidth, 20);
             folderStatus.Font = Theme.Ui(9.5f, FontStyle.Regular);
-            folderStatus.BackColor = Color.Transparent;
             target.Controls.Add(folderStatus);
             return y + 104;
         }
@@ -1341,11 +2169,11 @@ namespace FFRRandomizerGui
         int BuildSeed(int y)
         {
             AddHeading("Seed", y);
-            AddInput(seedBox, Pad, y + 22, 412, new Font("Consolas", 12f, FontStyle.Regular));
+            AddInput(seedBox, Pad, y + 22, 412, Theme.Mono(12f));
             seedBox.AccessibleName = "Seed";
             seedBox.MaxLength = 40;
             seedBox.TextChanged += delegate { ClearSaved(); };
-            Button randomButton = MakeButton("Random", 440, y + 22, 100, 44);
+            MenuButton randomButton = MakeButton("Random", Pad + 420, y + 22, 100, 44);
             randomButton.Click += delegate { seedBox.Text = NewSeed(); };
             AddLabel("Share the settings code below so others get the same game.", Pad, y + 72, ContentWidth,
                 Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
@@ -1358,12 +2186,12 @@ namespace FFRRandomizerGui
         int BuildCode(int y)
         {
             AddHeading("Settings code", y);
-            AddInput(codeBox, Pad, y + 22, ContentWidth - 88 - 120 - 16, new Font("Consolas", 12f, FontStyle.Regular));
+            AddInput(codeBox, Pad, y + 22, ContentWidth - 88 - 120 - 16, Theme.Mono(12f));
             codeBox.ReadOnly = true;
             codeBox.AccessibleName = "Settings code";
-            Button copy = MakeButton("Copy", ContentWidth + Pad - 120 - 8 - 88, y + 22, 88, 44);
+            MenuButton copy = MakeButton("Copy", ContentWidth + Pad - 120 - 8 - 88, y + 22, 88, 44);
             copy.Click += delegate { CopyCode(); };
-            Button paste = MakeButton("Paste code", ContentWidth + Pad - 120, y + 22, 120, 44);
+            MenuButton paste = MakeButton("Paste code", ContentWidth + Pad - 120, y + 22, 120, 44);
             paste.Click += delegate { PasteCode(); };
             AddLabel("The seed and every option, sliders too. Paste a friend’s code to load it.", Pad, y + 72,
                 ContentWidth, Theme.Ui(9.5f, FontStyle.Regular), Theme.Muted);
@@ -1380,8 +2208,8 @@ namespace FFRRandomizerGui
             for (int i = 0; i < 3; i++)
             {
                 int which = i;
-                Button button = MakeButton(PresetNames[i], Pad + i * (width + 8), y + 22, width, 44);
-                button.Font = Theme.Ui(10f, FontStyle.Bold);
+                MenuButton button = MakeButton(PresetNames[i], Pad + i * (width + 8), y + 22, width, 44);
+                button.Font = Theme.Ui(10.5f, FontStyle.Bold);
                 button.Click += delegate { ApplyPreset(which); };
                 presetButtons[i] = button;
             }
@@ -1469,10 +2297,9 @@ namespace FFRRandomizerGui
                 {
                     match = current.Toggles[t] == preset.Toggles[t];
                 }
-                Button button = presetButtons[i];
-                button.BackColor = match ? Theme.Accent : Theme.Button;
-                button.ForeColor = match ? Theme.AccentText : i == 2 ? Theme.Bad : Theme.Text;
-                button.FlatAppearance.BorderColor = match ? Theme.Accent : i == 2 ? Theme.BadBorder : Theme.ButtonBorder;
+                MenuButton button = presetButtons[i];
+                button.Lit = match;
+                button.ForeColor = i == 2 ? Theme.Bad : Theme.Text;
             }
         }
 
@@ -1485,42 +2312,33 @@ namespace FFRRandomizerGui
             for (int i = 0; i < 3; i++)
             {
                 int which = i, top = i * 64;
-                Label name = new Label();
+                Label name = new MenuLabel();
                 name.Text = RateNames[i];
-                name.Font = Theme.Ui(11f, FontStyle.Bold);
+                name.Font = Theme.Ui(12f, FontStyle.Bold);
                 name.ForeColor = Theme.Text;
-                name.BackColor = Theme.Panel;
-                name.SetBounds(14, top + 20, 64, 24);
-                TrackBar bar = new TrackBar();
+                name.SetBounds(38, top + 19, 54, 26);
+                MenuSlider bar = new MenuSlider();
                 bar.Minimum = 1;
                 bar.Maximum = 40;
                 bar.Value = 4;
-                bar.TickStyle = TickStyle.None;
                 bar.SmallChange = 1;
                 bar.LargeChange = 4;
-                bar.AutoSize = false;
-                bar.BackColor = Theme.Panel;
                 bar.AccessibleName = RateNames[i] + " multiplier";
-                bar.SetBounds(84, top + 18, ContentWidth - 84 - 14 - 44 - 8 - 64 - 8, 30);
+                bar.SetBounds(92, top + 16, ContentWidth - 92 - 44 - 8 - 64 - 8, 32);
+                HandCursor.Attach(bar, card, i);
                 bar.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-                Label value = new Label();
-                value.Font = new Font("Consolas", 11f, FontStyle.Regular);
+                Label value = new MenuLabel();
+                value.Font = Theme.Mono(11f);
                 value.ForeColor = Theme.Text;
-                value.BackColor = Theme.Panel;
                 value.TextAlign = ContentAlignment.MiddleRight;
-                value.SetBounds(ContentWidth - 14 - 44 - 8 - 64, top + 18, 64, 28);
+                value.SetBounds(ContentWidth - 44 - 8 - 64, top + 18, 64, 28);
                 value.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-                Button reset = new Button();
+                MenuButton reset = new MenuButton();
                 reset.Text = "1x";
                 reset.AccessibleName = "Reset " + RateNames[i] + " to 1x";
-                reset.FlatStyle = FlatStyle.Flat;
-                reset.FlatAppearance.BorderColor = Theme.ButtonBorder;
-                reset.BackColor = Theme.Button;
-                reset.ForeColor = Theme.Text;
-                reset.Font = Theme.Ui(9f, FontStyle.Regular);
-                reset.SetBounds(ContentWidth - 14 - 44, top + 16, 44, 32);
+                reset.Font = Theme.Ui(9.5f, FontStyle.Bold);
+                reset.SetBounds(ContentWidth - 44, top + 16, 44, 32);
                 reset.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-                reset.Cursor = Cursors.Hand;
                 reset.Click += delegate { rateBars[which].Value = 4; };
                 bar.ValueChanged += delegate
                 {
@@ -1593,25 +2411,14 @@ namespace FFRRandomizerGui
             return y + 44;
         }
 
+        // Drawn in a red-tinted window (see BuildTabs).
         int BuildChaosWarning(int y)
         {
-            Card card = new Card();
-            card.Outline = ColorTranslator.FromHtml("#6b3a40");
-            card.BackColor = ColorTranslator.FromHtml("#2a1a1d");
-            card.Location = new Point(Pad, y);
-            card.Size = new Size(ContentWidth, 44);
-            Label text = new Label();
-            text.Text = "These can make a run unwinnable or break the story. Create Randomizer File asks you to confirm when any is on.";
-            text.Font = Theme.Ui(9.5f, FontStyle.Regular);
-            text.ForeColor = ColorTranslator.FromHtml("#f2c4c4");
-            text.BackColor = card.BackColor;
-            text.Location = new Point(12, 4);
-            text.Size = new Size(ContentWidth - 24, 36);
+            Label text = AddLabel("These can make a run unwinnable or break the story. Create Randomizer File asks you to confirm " +
+                "when any is on.", Pad, y, ContentWidth, Theme.Ui(10f, FontStyle.Bold), ColorTranslator.FromHtml("#ffd6d6"));
+            text.Height = 40;
             text.TextAlign = ContentAlignment.MiddleLeft;
-            text.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            card.Controls.Add(text);
-            target.Controls.Add(card);
-            return y + 56;
+            return y + 40;
         }
 
         // Vision mixing needs the ability shuffle, character mixing needs moves
@@ -1642,52 +2449,48 @@ namespace FFRRandomizerGui
             }
         }
 
-        // A rounded card of 64 px rows with lines between them, under a heading.
+        // Rows of 64 px with faint lines between them, under a heading. The
+        // card draws the hand beside whichever row has focus or the mouse.
         Card AddToggleCard(string heading, int y, int rows)
         {
             AddHeading(heading, y);
             Card card = new Card();
-            card.Radius = 10;
+            card.Rows = rows;
             card.Location = new Point(Pad, y + 22);
             card.Size = new Size(ContentWidth, rows * 64);
             target.Controls.Add(card);
-            card.Paint += delegate(object sender, PaintEventArgs e)
-            {
-                using (Pen pen = new Pen(Theme.Border))
-                {
-                    float s = DeviceDpi / 96f;
-                    for (int row = 1; row < rows; row++)
-                    {
-                        e.Graphics.DrawLine(pen, 0, row * 64 * s, card.Width - 1, row * 64 * s);
-                    }
-                }
-            };
             return card;
         }
 
         // Badges sit after the title: NEW in the accent color, LATER greyed with
         // the title and switch. The title is measured at the screen's scale and
         // brought back to design units, since the form scales everything after.
+        // The left 38 px of a row are the hand's.
         void AddShuffleRow(Card card, int index, string title, string detail, ToggleSwitch toggle, string badge)
         {
             bool later = badge == "LATER";
             int top = index * 64;
-            Label name = new Label();
+            int text = 38;
+            int width = ContentWidth - text - toggle.Width - 8;
+            Label name = new MenuLabel();
             name.Text = title;
-            name.Font = Theme.Ui(11f, FontStyle.Bold);
-            name.ForeColor = later ? Theme.Muted : Theme.Text;
-            name.Location = new Point(14, top + 10);
-            name.Size = new Size(400, 22);
-            Label info = new Label();
+            name.Font = Theme.Ui(12f, FontStyle.Bold);
+            name.ForeColor = later ? Theme.Dim : Theme.Text;
+            name.Location = new Point(text, top + 8);
+            name.Size = new Size(width, 24);
+            Label info = new MenuLabel();
             info.Text = detail;
             info.Font = Theme.Ui(9.5f, FontStyle.Regular);
             info.ForeColor = Theme.Muted;
-            info.Location = new Point(14, top + 33);
-            info.Size = new Size(420, 20);
-            toggle.Location = new Point(ContentWidth - 52 - 14, top + 17);
+            info.Location = new Point(text, top + 31);
+            info.Size = new Size(width, 33);
+            toggle.Location = new Point(ContentWidth - toggle.Width, top + 17);
             toggle.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             name.Anchor = info.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             toggle.AccessibleName = title;
+            HandCursor.Attach(toggle, card, index);
+            HandCursor.Attach(name, card, index);
+            HandCursor.Attach(info, card, index);
             if (!later)
             {
                 toggle.Changed += delegate { ClearSaved(); UpdateCounts(); };
@@ -1695,15 +2498,14 @@ namespace FFRRandomizerGui
             if (badge != null)
             {
                 float scale = DeviceDpi / 96f;
-                Label tag = new Label();
+                Label tag = new MenuLabel();
                 tag.Text = badge;
                 tag.Font = Theme.Ui(7.5f, FontStyle.Bold);
-                tag.ForeColor = later ? ColorTranslator.FromHtml("#c9cfda") : Theme.AccentText;
-                tag.BackColor = later ? Theme.Border : Theme.Accent;
+                tag.ForeColor = later ? Theme.Dim : Theme.Accent;
                 tag.TextAlign = ContentAlignment.MiddleCenter;
                 int titleWidth = (int)(TextRenderer.MeasureText(title, name.Font).Width / scale);
                 int tagWidth = (int)(TextRenderer.MeasureText(badge, tag.Font).Width / scale) + 6;
-                tag.SetBounds(14 + titleWidth + 4, top + 12, tagWidth, 18);
+                tag.SetBounds(text + titleWidth + 4, top + 11, tagWidth, 18);
                 tag.Anchor = AnchorStyles.Top | AnchorStyles.Left;
                 card.Controls.Add(tag);
                 name.Width = titleWidth + 2;
@@ -1714,109 +2516,116 @@ namespace FFRRandomizerGui
             card.Controls.Add(toggle);
         }
 
+        // Three words in a row, the picked one bright; the hand sits beside
+        // whichever has focus or the mouse.
         int BuildChoice(string heading, int y, string[] labels, RadioButton[] buttons, Label help)
         {
             AddHeading(heading, y);
             Card card = new Card();
-            card.Radius = 10;
             card.Location = new Point(Pad, y + 22);
-            card.Size = new Size(ContentWidth, 48);
+            card.Size = new Size(ContentWidth, 44);
             target.Controls.Add(card);
-            int width = (ContentWidth - 8 - 8) / 3;
+            int width = ChoiceWidth;
             for (int i = 0; i < 3; i++)
             {
-                RadioButton option = new RadioButton();
-                option.Appearance = Appearance.Button;
-                option.FlatStyle = FlatStyle.Flat;
-                option.FlatAppearance.BorderSize = 0;
-                option.FlatAppearance.CheckedBackColor = Theme.Accent;
-                option.FlatAppearance.MouseOverBackColor = Theme.Button;
-                option.TextAlign = ContentAlignment.MiddleCenter;
-                option.Font = Theme.Ui(10.5f, FontStyle.Bold);
+                RadioButton option = new MenuChoice();
+                option.Font = Theme.Ui(12f, FontStyle.Bold);
                 option.Text = labels[i];
                 option.AccessibleName = heading + ": " + labels[i];
-                option.Location = new Point(4 + i * (width + 4), 4);
+                option.Location = new Point(i * width, 2);
                 option.Size = new Size(width, 40);
-                option.Cursor = Cursors.Hand;
                 option.CheckedChanged += delegate { UpdateChoices(); ClearSaved(); };
                 buttons[i] = option;
                 card.Controls.Add(option);
             }
             card.Resize += delegate { LayOutChoice(card, buttons); };
-            help.Location = new Point(Pad, y + 76);
-            help.Size = new Size(ContentWidth, 20);
+            help.Location = new Point(Pad + 38, y + 70);
+            help.Size = new Size(ContentWidth - 38, 20);
             help.Font = Theme.Ui(9.5f, FontStyle.Regular);
             help.ForeColor = Theme.Muted;
-            help.BackColor = Color.Transparent;
             target.Controls.Add(help);
-            return y + 108;
+            return y + 92;
         }
 
-        // The three buttons share the card's width, with the gap they start with.
-        static void LayOutChoice(Card card, RadioButton[] buttons)
+        // Each option is ChoiceWidth wide (less if the card is narrower), so
+        // the three sit together like a menu's choices.
+        const int ChoiceWidth = 160;
+
+        void LayOutChoice(Card card, RadioButton[] buttons)
         {
             if (buttons[2] == null)
             {
                 return;
             }
-            int gap = buttons[0].Top;
-            int width = (card.ClientSize.Width - 4 * gap) / 3;
+            int width = Math.Min((int)Math.Round(ChoiceWidth * DeviceDpi / 96f), card.ClientSize.Width / 3);
             for (int i = 0; i < 3; i++)
             {
-                buttons[i].SetBounds(gap + i * (width + gap), gap, width, buttons[i].Height);
+                buttons[i].SetBounds(i * width, buttons[i].Top, width, buttons[i].Height);
             }
         }
 
-        // The apply status card, with a saved message laid over it while one is
-        // showing, then the buttons.
+        // Bottom left, a command window with the two main actions; bottom
+        // right, the status box: the apply status, its seed check, and the
+        // saved message laid over them while one is showing. LayOut places them.
         void BuildFooter()
         {
-            statusCard.Location = new Point(Pad, fullHeight - 144);
-            statusCard.Size = new Size(ContentWidth, 76);
-            Label[] lines = { statusTitle, statusDetail, statusCheck };
-            for (int i = 0; i < lines.Length; i++)
+            foreach (WindowPanel window in new[] { commandWindow, statusWindow })
             {
-                lines[i].Location = new Point(12, 7 + i * 21);
-                lines[i].Size = new Size(ContentWidth - 24, 20);
-                lines[i].Font = Theme.Ui(i == 0 ? 10f : 9.5f, i == 0 ? FontStyle.Bold : FontStyle.Regular);
-                lines[i].Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-                lines[i].AutoEllipsis = true;
-                statusCard.Controls.Add(lines[i]);
+                window.Size = new Size(SectionWidth, FooterRow);
+                Controls.Add(window);
             }
-            Controls.Add(statusCard);
+            int inner = SectionWidth - 2 * Pad;
 
-            savedCard.Outline = Theme.GoodBorder;
-            savedCard.BackColor = Theme.GoodBack;
-            savedCard.Location = new Point(Pad, fullHeight - 144);
-            savedCard.Size = new Size(ContentWidth, 76);
-            savedText.Location = new Point(12, 4);
-            savedText.Size = new Size(ContentWidth - 24, 68);
-            savedText.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            savedText.TextAlign = ContentAlignment.MiddleLeft;
-            savedText.Font = Theme.Ui(9.5f, FontStyle.Regular);
-            savedText.BackColor = Theme.GoodBack;
-            savedCard.Controls.Add(savedText);
-            savedCard.Visible = false;
-            Controls.Add(savedCard);
-            savedCard.BringToFront();
-
+            createButton.Command = true;
             createButton.Text = "Create Randomizer File";
-            createButton.Location = new Point(Pad, fullHeight - 60);
-            createButton.Size = new Size(358, 48);
-            createButton.FlatStyle = FlatStyle.Flat;
-            createButton.FlatAppearance.BorderSize = 0;
-            createButton.FlatAppearance.MouseOverBackColor = ColorTranslator.FromHtml("#7bbcec");
-            createButton.BackColor = Theme.Accent;
-            createButton.ForeColor = Theme.AccentText;
-            createButton.Font = Theme.Ui(11.5f, FontStyle.Bold);
-            createButton.Cursor = Cursors.Hand;
+            createButton.Font = Theme.Ui(13.5f, FontStyle.Bold);
+            createButton.SetBounds(WinInset + 8, 12, SectionWidth - 2 * (WinInset + 8), 40);
+            createButton.Anchor = AnchorStyles.None;
             createButton.Click += delegate { CreateFile(); };
-            Controls.Add(createButton);
+            commandWindow.Controls.Add(createButton);
             AcceptButton = createButton;
 
-            Button spoiler = MakeButton("Open spoiler log", 388, fullHeight - 60, 152, 48);
-            spoiler.BackColor = Theme.Ground;
-            spoiler.Click += delegate { OpenSpoiler(); };
+            spoilerButton.Command = true;
+            spoilerButton.Text = "Open spoiler log";
+            spoilerButton.Font = Theme.Ui(12f, FontStyle.Bold);
+            spoilerButton.ForeColor = Theme.Muted;
+            spoilerButton.SetBounds(WinInset + 8, 56, SectionWidth - 2 * (WinInset + 8), 40);
+            spoilerButton.Anchor = AnchorStyles.None;
+            spoilerButton.Click += delegate { OpenSpoiler(); };
+            commandWindow.Controls.Add(spoilerButton);
+
+            statusTitle.SetBounds(Pad, 10, inner, 24);
+            statusTitle.Font = Theme.Ui(12f, FontStyle.Bold);
+            statusTitle.AutoEllipsis = true;
+            statusDetail.SetBounds(Pad, 34, inner, 40);
+            statusDetail.Font = Theme.Ui(9.5f, FontStyle.Regular);
+            statusDetail.AutoEllipsis = true;
+            checkKey.Text = "SEED CHECK";
+            checkKey.Font = Theme.Ui(9.5f, FontStyle.Bold);
+            checkKey.ForeColor = Theme.Accent;
+            checkKey.SetBounds(Pad, 77, 110, 20);
+            checkKey.TextAlign = ContentAlignment.MiddleLeft;
+            statusCheck.Font = Theme.Mono(12f);
+            statusCheck.ForeColor = Theme.Text;
+            statusCheck.SetBounds(Pad + 112, 74, inner - 112, 24);
+            statusCheck.TextAlign = ContentAlignment.MiddleLeft;
+            foreach (Label line in new[] { statusTitle, statusDetail, checkKey, statusCheck })
+            {
+                line.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+                statusWindow.Controls.Add(line);
+            }
+            checkKey.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+
+            savedCard.SetBounds(WinInset + 4, 4, SectionWidth - 2 * (WinInset + 4), FooterWindow - 8);
+            savedCard.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            savedText.SetBounds(WinPad - 4, 4, savedCard.Width - 2 * (WinPad - 4), savedCard.Height - 8);
+            savedText.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            savedText.TextAlign = ContentAlignment.MiddleLeft;
+            savedText.Font = Theme.Ui(11f, FontStyle.Bold);
+            savedCard.Controls.Add(savedText);
+            savedCard.Visible = false;
+            statusWindow.Controls.Add(savedCard);
+            savedCard.BringToFront();
         }
 
         void UpdateChoices()
@@ -1830,8 +2639,7 @@ namespace FFRRandomizerGui
                 {
                     if (option != null)
                     {
-                        option.BackColor = option.Checked ? Theme.Accent : Theme.Panel;
-                        option.ForeColor = option.Checked ? Theme.AccentText : Theme.Text;
+                        option.Invalidate();
                     }
                 }
             }
@@ -1962,14 +2770,13 @@ namespace FFRRandomizerGui
             ShowSaved("Loaded " + codeBox.Text + ": seed and " + count + " options set. Press Create Randomizer File to save it.", true);
         }
 
+        // A message over the status box until the next change.
         void ShowSaved(string message, bool good)
         {
-            savedCard.Outline = good ? Theme.GoodBorder : Theme.BadBorder;
-            savedCard.BackColor = savedText.BackColor = good ? Theme.GoodBack : Theme.BadBack;
-            savedText.ForeColor = good ? ColorTranslator.FromHtml("#bfe9cf") : Theme.Bad;
+            savedText.ForeColor = good ? Theme.Good : Theme.Bad;
             savedText.Text = message;
             savedCard.Visible = true;
-            savedCard.Invalidate();
+            savedCard.Invalidate(true);
         }
 
         bool ModInstalled
@@ -2095,7 +2902,7 @@ namespace FFRRandomizerGui
             int errors, changes;
             int.TryParse(Value(status, "errors"), out errors);
             int.TryParse(Value(status, "changes"), out changes);
-            string check = Value(status, "check") == "" ? null : "Seed check   " + Value(status, "check");
+            string check = Value(status, "check") == "" ? null : Value(status, "check");
             if (state == "error")
             {
                 SetStatus(2, "!  Not applied: the mod hit an error", Value(status, "message").TrimEnd('.') + ". Please report it with the UE4SS log.", null);
@@ -2157,22 +2964,15 @@ namespace FFRRandomizerGui
         // kind: 0 neutral, 1 warning, 2 problem, 3 good.
         void SetStatus(int kind, string title, string detail, string check)
         {
-            Color[] back = { Theme.Panel, Theme.WarnBack, Theme.BadBack, Theme.GoodBack };
-            Color[] border = { Theme.Border, Theme.WarnBorder, Theme.BadBorder, Theme.GoodBorder };
-            Color[] text = { Theme.Text, Theme.Warn, Theme.Bad, ColorTranslator.FromHtml("#bfe9cf") };
-            statusCard.BackColor = back[kind];
-            statusCard.Outline = border[kind];
-            foreach (Label label in new[] { statusTitle, statusDetail, statusCheck })
-            {
-                label.BackColor = back[kind];
-            }
+            Color[] text = { Theme.Text, Theme.Warn, Theme.Bad, Theme.Good };
             statusTitle.ForeColor = text[kind];
-            statusDetail.ForeColor = kind == 0 ? Theme.Muted : text[kind];
-            statusCheck.ForeColor = Theme.Text;
+            statusDetail.ForeColor = kind == 1 || kind == 2 ? text[kind] : Theme.Muted;
             statusTitle.Text = title;
             statusDetail.Text = detail;
             statusCheck.Text = check ?? "";
-            statusCard.Invalidate();
+            checkKey.Visible = check != null;
+            statusCheck.Visible = check != null;
+            statusWindow.Invalidate(true);
         }
 
         protected override void OnActivated(EventArgs e)

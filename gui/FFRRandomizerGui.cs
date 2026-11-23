@@ -17,7 +17,7 @@ using Microsoft.Win32;
 
 [assembly: System.Reflection.AssemblyTitle("FFR Randomizer")]
 [assembly: System.Reflection.AssemblyProduct("FFR Randomizer")]
-[assembly: System.Reflection.AssemblyVersion("1.0.2.0")]
+[assembly: System.Reflection.AssemblyVersion("1.0.3.0")]
 
 namespace FFRRandomizerGui
 {
@@ -153,7 +153,7 @@ namespace FFRRandomizerGui
     static class Game
     {
         // Kept in step with MOD_VERSION in the mod's main.lua.
-        public const string AppVersion = "1.0.2";
+        public const string AppVersion = "1.0.3";
         // The oldest mod this app's Randomizer File fully works with. The
         // portable app can update without Setup while the mod is at least
         // this; raise it when the file format or the mod's options change.

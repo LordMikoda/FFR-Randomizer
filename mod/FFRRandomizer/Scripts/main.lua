@@ -3,7 +3,7 @@
 -- applies it in memory. Nothing on disk in the game changes, and removing this
 -- folder undoes everything.
 
-local MOD_VERSION = "1.0.2"
+local MOD_VERSION = "1.0.3"
 local LOG_PREFIX = "[FFRRandomizer] "
 local CHECK_INTERVAL_MS = 3000
 
@@ -134,6 +134,31 @@ local BOSS_CATEGORY = 3
 local function isFixedBossGroup(id)
     return (id >= 9922 and id <= 9999) or id == 9021 or id == 9060
 end
+
+-- Minions a boss calls in during its fight. The game spawns these from the
+-- boss's AI, by unit ID or through a battle group with no finish event, so
+-- the tables don't link them to the boss. When the boss is swapped, they go
+-- with it and are scaled by the same amount (scaleMinions).
+-- Left out: minions that also start in a fight (Wave boss 2014/2018, the
+-- Emperor's 2025, Mind Flayer's 2075), Father Bomb's Painy Bombs (157, a
+-- normal enemy), and Gilgamesh's helpers (2092-2094, which fight is unknown).
+local BOSS_MINIONS = {
+    [113] = { 2004 },              -- ハンガー (Ch1): ハンガーVer2, group 9063
+    [409] = { 2005, 2006 },        -- 天風のヴェリアス, Aether (Ch2): 天風の手先, 天風の守護
+    [2063] = { 2077, 2078 },       -- Aether (Ch7): 天風の手先７章, 天風の守護７章
+    [411] = { 2007 },              -- 水華のヴェリアス, Alluvion (Ch3): 水晶核, groups 9064-9065
+    [2065] = { 2079 },             -- Alluvion (Ch7): 水晶核７章, groups 9120-9121
+    [415] = { 2029, 2030, 2031 },  -- ラザロフ (Ch4): his experiments, groups 9090-9092
+    [447] = { 2022 },              -- マザーボム (Ch2): ボムグレート, group 2011 (by name and level)
+    [453] = { 2088 },              -- シヴァ_BOSS: シヴァのエレメンタル, groups 9135-9137
+}
+-- Minion fields scaled by the boss's change. Level moves by the same number
+-- of levels instead.
+local MINION_SCALE_FIELDS = {
+    "MagicPoint", "MaxHitPoint", "MaxMagicPoint", "MaxBreakPoint",
+    "Attack", "Defence", "Intelligence", "Mind", "Divine", "Agility",
+    "Experience", "Money",
+}
 
 -- Developer test battles (groups 1 to 6, such as "1-enemy check", and the
 -- 300000 parts test) never run in play. They use Steel Bats and Goblins, so
@@ -974,6 +999,51 @@ local function hasName(value)
     return text ~= "" and text ~= "None"
 end
 
+-- A swapped boss's minions (BOSS_MINIONS) change by as much as the boss did:
+-- each stat by the ratio of the replaced boss's value to the new boss's own,
+-- and Level by the difference. So Aether in a Chapter 1 fight brings
+-- Chapter 1 strength minions. A minion that starts in a real fight (one with
+-- a finish event) or is in the boss pool stays as it is, since the change
+-- would reach that fight too.
+local function scaleMinions(plan, tables, rowOf, replacement, ids, inRealFights)
+    local inPool = {}
+    for _, id in ipairs(ids) do
+        inPool[id] = true
+    end
+    local scaled = 0
+    for _, id in ipairs(ids) do
+        local new = replacement[id]
+        local minions = BOSS_MINIONS[new]
+        if new ~= id and minions ~= nil then
+            local spot = tables.units:FindRow(rowOf[id])
+            local boss = tables.units:FindRow(rowOf[new])
+            for _, minion in ipairs(minions) do
+                if rowOf[minion] ~= nil and not inRealFights[minion] and not inPool[minion] then
+                    local row = tables.units:FindRow(rowOf[minion])
+                    local level = row.Level + (spot.Level - boss.Level)
+                    addPatch(plan, "units", rowOf[minion], "Level", math.max(1, math.min(99, level)))
+                    for _, field in ipairs(MINION_SCALE_FIELDS) do
+                        local from, to, value = boss[field], spot[field], row[field]
+                        if from ~= nil and from > 0 and to ~= nil and value ~= nil and value > 0 then
+                            -- A stat the spot has at 0 stays 0; others never drop below 1.
+                            local scaledValue = 0
+                            if to > 0 then
+                                scaledValue = math.max(1, math.floor(value * to / from + 0.5))
+                            end
+                            addPatch(plan, "units", rowOf[minion], field, scaledValue)
+                        end
+                    end
+                    scaled = scaled + 1
+                    addSpoiler(plan, "Bosses", string.format("%s comes with %s, scaled to level %d",
+                        unitLabel(tables.units, rowOf[minion], minion), unitLabel(tables.units, rowOf[new], new),
+                        math.max(1, math.min(99, level))))
+                end
+            end
+        end
+    end
+    return scaled
+end
+
 -- One-for-one swap of bosses across boss fights, the same way as enemies: the
 -- new boss keeps its own abilities, looks and resistances, and takes the
 -- replaced boss's level, stats, EXP, Gil, drops and steals. Sizes aren't
@@ -985,11 +1055,17 @@ end
 local function shuffleBosses(plan, settings, tables)
     local rowOf, category, sizeOf = readUnits(tables)
 
-    local fights, inFights, elsewhere = {}, {}, {}
+    local fights, inFights, elsewhere, inRealFights = {}, {}, {}, {}
     for _, name in ipairs(sortedRowNames(tables.battleGroups)) do
         local row = tables.battleGroups:FindRow(name)
         if not isDebugGroup(row.ID) then
             local ids = arrayItems(row.UnitIdList)
+            -- Spawn groups have no finish event and no encounter table rolls them.
+            if hasName(row.battleFinishEventId) or (ENCOUNTER_GROUPS ~= nil and ENCOUNTER_GROUPS[row.ID]) then
+                for _, id in ipairs(ids) do
+                    inRealFights[id] = true
+                end
+            end
             local bossSlots = {}
             for i, id in ipairs(ids) do
                 if category[id] == BOSS_CATEGORY then
@@ -1048,7 +1124,12 @@ local function shuffleBosses(plan, settings, tables)
             unitLabel(tables.units, rowOf[new], new), unitLabel(tables.units, rowOf[id], id),
             UNIT_SIZES[sizeOf[new]] or "Unknown", UNIT_SIZES[sizeOf[id]] or "Unknown"))
     end
-    log(string.format("Bosses: %d in boss fights, %d swapped.", #ids, moved))
+    -- At full strength bosses keep their own stats, so their minions do too.
+    local minions = 0
+    if not settings.fullStrength then
+        minions = scaleMinions(plan, tables, rowOf, replacement, ids, inRealFights)
+    end
+    log(string.format("Bosses: %d in boss fights, %d swapped, %d minions scaled.", #ids, moved, minions))
 end
 
 -- Vision abilities ----------------------------------------------------------

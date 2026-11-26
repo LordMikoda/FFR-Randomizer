@@ -3,7 +3,7 @@
 -- applies it in memory. Nothing on disk in the game changes, and removing this
 -- folder undoes everything.
 
-local MOD_VERSION = "1.0.3"
+local MOD_VERSION = "1.0.4"
 local LOG_PREFIX = "[FFRRandomizer] "
 local CHECK_INTERVAL_MS = 3000
 
@@ -131,8 +131,10 @@ local BOSS_CATEGORY = 3
 -- Boss fights that never swap, on top of the rules in shuffleBosses. The
 -- Twelve Arms fights run in chained phases, and Leviathan's and the Antlion's
 -- battle events are named for the monster, so they likely drive its mechanics.
+-- Behemoth's first fight (9051, Ch8) can only be won through things that
+-- happen in that fight; moved elsewhere it couldn't be hurt (1.0.4 report).
 local function isFixedBossGroup(id)
-    return (id >= 9922 and id <= 9999) or id == 9021 or id == 9060
+    return (id >= 9922 and id <= 9999) or id == 9021 or id == 9060 or id == 9051
 end
 
 -- Minions a boss calls in during its fight. The game spawns these from the

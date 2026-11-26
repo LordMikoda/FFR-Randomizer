@@ -64,8 +64,9 @@ Both are off by default; turn them on in the app. Random encounter enemies
 swap one-for-one with enemies of the same size, and bosses swap with other
 bosses. Each swapped-in enemy or boss keeps its own abilities and takes the
 level, HP, stats, EXP, Gil, drops and steals of the one it replaced, so every
-fight plays and pays as before. Lose-on-purpose and multi-phase boss fights
-are not changed.
+fight plays and pays as before. Minions a moved boss calls in mid-fight
+change by as much as their boss did. Lose-on-purpose and multi-phase boss
+fights are not changed.
 
 Vision abilities
 ----------------

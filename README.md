@@ -18,7 +18,7 @@ It's a UE4SS Lua mod that changes the game's tables in memory while the game run
 - **Gear and enemies (off by default):** gear stats and passives, enemy weaknesses, status resistances and passives, and the encounter rate.
 - **We are Chaos (off by default):** fully random stats, swapped weapon and armor types, enemies at full strength, shops that sell anything, and story items in the shuffle. These can make a run unwinnable.
 - **Enemies (off by default):** random encounter enemies swap one-for-one with enemies of the same size, taking the level, HP, stats, EXP, Gil, drops and steals of the one they replace.
-- **Bosses (off by default):** boss fights swap bosses. The new boss keeps its own abilities and takes the replaced boss's stats and rewards. Lose-on-purpose and multi-phase fights stay put.
+- **Bosses (off by default):** boss fights swap bosses. The new boss keeps its own abilities and takes the replaced boss's stats and rewards; minions it calls in mid-fight scale with it. Lose-on-purpose and multi-phase fights stay put.
 - **Music (off by default):** battle, field and town tracks swap, either within their own kind (Shuffle) or in one pool (Mixed). Airship and chocobo music don't change yet.
 - **Spoiler log:** a text file listing where everything went, with enemies and bosses by name.
 - **Presets:** WoL Mode, Dark Knight Mode and True Chaos Mode set every switch in one click.
